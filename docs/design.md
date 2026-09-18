@@ -72,6 +72,28 @@ either asks a human to type dates or scales effort for human developers.
 - `roadmap.html`: single file, no server, dark/light, table view for accessibility; swimlane per repo +
   goals lane; bars to P80 with P50 marker, target marker if `due_at` is set.
 
+## Relationship to beads_viewer (`bv`)
+`bv` (Dicklesworthstone/beads_viewer) already computes several things beadline needs: dependency graph
+construction and cycle detection, critical path, dependency-respecting execution "waves"
+(`--robot-plan`), serial-vs-parallel capacity (`--robot-capacity`), git-history time travel
+(`--robot-diff --diff-since`), and an interactive graph HTML export. Its Go packages are public
+(`pkg/analysis`, `pkg/loader`, `pkg/export`).
+
+**Decision: beadline takes no code from `bv`.** `bv` is licensed "MIT with an OpenAI/Anthropic rider":
+derivative works must carry a rider that grants no rights to those companies or anyone acting on their
+behalf, and forbids use in ML/automated pipelines. Importing, vendoring or forking `bv` would therefore
+make beadline non-open-source in the ordinary sense and is incompatible with beadline's plain MIT
+license and with how beadline is built (by AI agents). Consequently:
+
+- **Clean room.** beadline implements its own graph loading, critical path, topological waves and
+  scheduling simulation from first principles (they are textbook algorithms). Contributors must not
+  copy or closely paraphrase `bv` source.
+- **Optional integration by CLI only.** If a user has `bv` installed, beadline may run it as an external
+  tool and consume its robot JSON (critical path, plan, history/diff) for cross-checks and extra views —
+  on an *enriched* JSONL copy where beadline has filled `estimated_minutes` from its estimator, so
+  `bv`'s capacity numbers come out at agent scale. beadline never bundles or depends on `bv`.
+- **Language choice stands on its own merits**, not on `bv` reuse.
+
 ## Non-goals
 - Not an issue tracker or a board (bd, bv, beads-ui do that). No writes except the optional
   `estimated_minutes` write-back.
