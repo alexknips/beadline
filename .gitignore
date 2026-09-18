@@ -4,8 +4,8 @@
 .beads/*.lock
 .beads/backup/
 # build / deps
-bin/
-dist/
+/bin/
+/dist/
 node_modules/
 __pycache__/
 *.pyc
