@@ -37,8 +37,8 @@ const rootFlagsHelp = `Flags:
   -v, --version        print the version
 
 Expert flags:
-      --as-of DATE     forecast as of DATE (2026-09-19 or RFC 3339), not now;
-                       records nothing
+      --as-of DATE     forecast from the data as it stood at DATE (2026-09-19
+                       or RFC 3339), not now; records nothing
       --seed N         random seed (default expert.seed, 1)
       --runs N         simulated schedules (default expert.runs, 2000)
       --agents REPO=N  agents that work REPO at once, or REPO=measure (the
@@ -54,6 +54,7 @@ type loaded struct {
 	graph   *graph.Graph
 	report  *load.Report
 	exports []load.Export
+	horizon time.Time // the latest moment the exports know about
 }
 
 // runRoot is the one command: read the repos, forecast, write roadmap.json
@@ -96,12 +97,13 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 		return usageError(stderr, "", "--runs must be at least 1")
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	var rewind time.Time // --as-of: the data as it stood then
 	if *asOf != "" {
 		t, err := parseDate(*asOf)
 		if err != nil {
 			return usageError(stderr, "", "--as-of: %v", err)
 		}
-		now = t
+		now, rewind = t, t
 	}
 	if *asJSON && *explain != "" {
 		return usageError(stderr, "", "--json and --explain both print to stdout; pick one")
@@ -124,7 +126,7 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 	warnAgents(cfg, stderr)
 
 	exports, failed := repos.read(cfg, stderr)
-	l, bad, err := parseExports(cfg, exports, stderr)
+	l, bad, err := parseExports(cfg, exports, rewind, stderr)
 	failed += bad
 	if err != nil {
 		fmt.Fprintf(stderr, "beadline: %v\n", err)
@@ -160,6 +162,9 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 	r.SetInputs(l.exports)
 	r.SetForecast(res, g)
 	r.Hide(cfg.Hide)
+	if rewind.IsZero() {
+		r.Calibration = trackRecord(snapshotDir(cfg, ""), g, l.horizon)
+	}
 
 	if err := write(r, page, jsonPath); err != nil {
 		fmt.Fprintf(stderr, "beadline: %v\n", err)
@@ -174,7 +179,7 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 	if record {
 		if err := recordSnapshot(res, g, cfg, r.Inputs, quiet, stderr); err != nil {
 			fmt.Fprintf(stderr, "beadline: %v\n", err)
-			return ExitFailure
+			failed++ // the roadmap is written; report it, then fail
 		}
 	} else if failed > 0 && !*noRecord && *asOf == "" && !quiet {
 		fmt.Fprintln(stderr, "no snapshot recorded: a repo could not be read")
@@ -195,6 +200,34 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 		return ExitFailure
 	}
 	return ExitOK
+}
+
+// trackRecord grades the recorded snapshots as 'beadline check' does and
+// returns how the 80% dates of milestones and goals held, or nil before
+// any outcome is known. Problems with snapshots are for check to report.
+func trackRecord(dir string, g *graph.Graph, horizon time.Time) *roadmap.Calibration {
+	snaps, _, err := calibrate.ReadDir(dir)
+	if err != nil || len(snaps) == 0 {
+		return nil
+	}
+	rep := calibrate.NewReport("snapshots", horizon, calibrate.Grade(snaps, calibrate.NewReality(g, horizon)))
+	share := func(level float64) (held, known int) {
+		for _, c := range rep.HighLevel.Model.Coverage {
+			if c.Level == level {
+				return c.Held, c.Known
+			}
+		}
+		return 0, 0
+	}
+	held80, known80 := share(0.8)
+	if known80 == 0 {
+		return nil
+	}
+	c := &roadmap.Calibration{Samples: known80, P80Coverage: float64(held80) / float64(known80)}
+	if held50, known50 := share(0.5); known50 > 0 {
+		c.P50Coverage = float64(held50) / float64(known50)
+	}
+	return c
 }
 
 // recordSnapshot records the forecast for 'beadline check': the first run
@@ -442,6 +475,7 @@ func cut(s string, n int) string {
 func explainItem(w io.Writer, id string, r *roadmap.Roadmap, g *graph.Graph, in *inputs) {
 	var o *roadmap.Outlook
 	head := id
+	repos := map[string]bool{} // the repos whose agents and pace the dates rest on
 	for n := range r.Milestones {
 		if m := &r.Milestones[n]; m.ID == id {
 			o, head = &m.Outlook, fmt.Sprintf("%s · %s (%s in %s)", m.ID, m.Title, m.Type, m.Repo)
@@ -470,8 +504,13 @@ func explainItem(w io.Writer, id string, r *roadmap.Roadmap, g *graph.Graph, in 
 	if o.AgentHours != nil {
 		fmt.Fprintf(w, "The median run takes %.1f h of agent time and %.1f h waiting on people.\n", *o.AgentHours, *o.HumanHours)
 	}
+	for _, rid := range o.RemainingIDs {
+		if i := g.Issue(rid); i != nil {
+			repos[i.Repo] = true
+		}
+	}
 	for _, rp := range r.Repos {
-		if rp.Concurrency != nil && rp.RatePerDay != nil {
+		if repos[rp.Name] && rp.Concurrency != nil && rp.RatePerDay != nil {
 			fmt.Fprintf(w, "Repo %s: %.0f agents (%s), %.2f beads closed a day over the last %d days.\n",
 				rp.Name, *rp.Concurrency, rp.ConcurrencySource, *rp.RatePerDay, r.Config.Model.WindowDays)
 		}

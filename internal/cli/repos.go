@@ -20,7 +20,7 @@ import (
 // defaultConfig is the config file read when -c is not given, if present.
 const defaultConfig = "beadline.toml"
 
-// exportTimeout bounds one repository's bd export.
+// exportTimeout bounds reading the repositories, which run in parallel.
 const exportTimeout = 5 * time.Minute
 
 // newExporter reads repository directories; tests replace it.
@@ -135,14 +135,19 @@ func (o *repoFlags) read(cfg *config.Config, stderr io.Writer) (exports []load.E
 	return exports, failed
 }
 
-// parseExports builds the graph from the exports that were read. An export
-// that is not valid JSONL fails its repo, like one that could not be read,
-// and the others still load.
-func parseExports(cfg *config.Config, exports []load.Export, stderr io.Writer) (l *loaded, failed int, err error) {
+// parseExports builds the graph from the exports that were read, as the
+// data stood at asOf (zero: as it is). An export that is not valid JSONL
+// fails its repo, like one that could not be read, and the others still
+// load.
+func parseExports(cfg *config.Config, exports []load.Export, asOf time.Time, stderr io.Writer) (l *loaded, failed int, err error) {
 	for {
-		g, rep, err := load.FromExports(&cfg.Conventions, exports)
+		ex, err := load.ParseExports(exports)
 		if err == nil {
-			return &loaded{graph: g, report: rep, exports: exports}, failed, nil
+			g, rep, err := ex.Graph(&cfg.Conventions, asOf)
+			if err != nil {
+				return nil, failed, err
+			}
+			return &loaded{graph: g, report: rep, exports: exports, horizon: ex.Horizon()}, failed, nil
 		}
 		// Find the export at fault: the error names its source.
 		bad := -1

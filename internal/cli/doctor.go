@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/alexknips/beadline/internal/graph"
 	"github.com/alexknips/beadline/internal/load"
@@ -42,7 +43,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	exports, failed := repos.read(cfg, stderr)
-	l, bad, err := parseExports(cfg, exports, stderr)
+	l, bad, err := parseExports(cfg, exports, time.Time{}, stderr)
 	failed += bad
 	if err != nil {
 		fmt.Fprintf(stderr, "beadline doctor: %v\n", err)

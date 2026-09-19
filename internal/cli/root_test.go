@@ -9,7 +9,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alexknips/beadline/internal/calibrate"
+	"github.com/alexknips/beadline/internal/config"
+	"github.com/alexknips/beadline/internal/forecast"
 	"github.com/alexknips/beadline/internal/load"
 	"github.com/alexknips/beadline/internal/roadmap"
 )
@@ -371,5 +375,76 @@ func TestRootRecordsSnapshots(t *testing.T) {
 	code, stdout, stderr := run(append([]string{"check"}, paths...)...)
 	if code != ExitOK || stderr != "" || !strings.Contains(stdout, "1 snapshot graded against data as of 2026-09-03") {
 		t.Errorf("check: exit %d, stderr %q\n%s", code, stderr, stdout)
+	}
+}
+
+func TestRootAsOfRewindsTheData(t *testing.T) {
+	status := func(asOf string) string {
+		dir := t.TempDir()
+		code, _, stderr := run(fixtures+"api.jsonl", fixtures+"web.jsonl", fixtures+"hq.jsonl",
+			"-o", dir, "--as-of", asOf, "--runs", "50", "-q")
+		if code != ExitOK {
+			t.Fatalf("--as-of %s: exit %d: %s", asOf, code, stderr)
+		}
+		for _, m := range readRoadmap(t, filepath.Join(dir, "roadmap.json")).Milestones {
+			if m.ID == "web-e2" {
+				return m.Status
+			}
+		}
+		return "absent"
+	}
+	// web-e2 closed on 2026-08-20.
+	if got := status("2026-09-03"); got != roadmap.StatusDone {
+		t.Errorf("after its close, web-e2 is %s", got)
+	}
+	if got := status("2026-08-15"); got == roadmap.StatusDone {
+		t.Error("before its close, web-e2 is done: --as-of did not rewind the data")
+	}
+}
+
+func TestTrackRecord(t *testing.T) {
+	cfg, err := config.Load(writeHistory(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex, err := load.ParseFiles(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Forecast the epic on day 19.5, while its child r-18 is open; the epic
+	// closed on day 42.
+	asOf := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	then, rep, err := ex.Graph(&cfg.Conventions, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := forecastInputs(cfg, then, rep, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.options.Grid, in.options.Runs = calibrate.Levels, 100
+	res, err := forecast.Run(then, in.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := calibrate.New(res, then, calibrate.Meta{GeneratedAt: asOf, BeadlineVersion: "test", Config: roadmap.ConfigOf(cfg)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, _, err := calibrate.Record(dir, snap); err != nil {
+		t.Fatal(err)
+	}
+
+	now, _, err := ex.Graph(&cfg.Conventions, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := trackRecord(dir, now, ex.Horizon())
+	if c == nil || c.Samples != 1 || (c.P80Coverage != 0 && c.P80Coverage != 1) {
+		t.Fatalf("track record = %+v, want the epic's one known outcome", c)
+	}
+	if c := trackRecord(t.TempDir(), now, ex.Horizon()); c != nil {
+		t.Errorf("no snapshots: track record = %+v", c)
 	}
 }

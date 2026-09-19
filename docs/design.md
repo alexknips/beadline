@@ -299,8 +299,11 @@ beads that actually closed, so it records exactly what went in.
     when P80 falls on or before the target, `at_risk` when only P50 does, and `late` when P50 falls
     after it or the target has passed. It is absent when there is no target, or no forecast yet to
     compare with. `Roadmap.Assess` computes it.
-- **`calibration`** holds `samples`, `p50_coverage` and `p80_coverage`. It is filled from the
-  snapshot grading of §3 once the forecast writes roadmap.json, and absent until then.
+- **`calibration`** holds `samples`, `p50_coverage` and `p80_coverage`. `beadline` fills it by
+  grading the recorded snapshots as `beadline check` does (§3): `samples` counts the milestone and
+  goal forecasts whose 80% outcome is known, and the coverages are the shares that held. It is
+  absent before any outcome is known, and with `--as-of` (bl-ya5.11). The page and the summary show
+  it as the track record, "80% dates held X of Y".
 
 `roadmap.Build` fills everything the graph alone determines. `Roadmap.SetForecast` then copies the
 forecaster's status (which knows `stalled` and parked work), dates, split of the median run and
@@ -374,7 +377,8 @@ beadline help [COMMAND]
   only errors and warnings. Nothing says "almost surely".
 - **Flags.** `-o/--out`, `-c/--config FILE` (default `./beadline.toml` when present), `--no-record`,
   `--json`, `-q/--quiet`, `--explain ID`, `-h/--help`, `-v/--version`. Expert: `--as-of DATE`
-  (`2026-09-19` or RFC 3339), `--seed N`, `--runs N`, `--agents REPO=N` (or `REPO=measure`;
+  (`2026-09-19` or RFC 3339: the forecast from the data as it stood then, rewound as the backtest
+  rewinds it, Calibration §3), `--seed N`, `--runs N`, `--agents REPO=N` (or `REPO=measure`;
   repeatable and comma-separated), `--bd PATH`. Flags may come before, between or after the paths;
   `--` ends them.
 - **Exit codes** (ADR-1 §4). 0 ok. 1 failure, including a repo that could not be read or parsed:
