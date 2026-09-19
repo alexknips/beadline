@@ -59,7 +59,7 @@ type lane struct {
 
 type row struct {
 	ID     string
-	Repos  string // data-repos: repos the row belongs to, space-separated
+	Repos  string // data-repos: the repos the row belongs to, as a JSON array
 	Y      int    // within the lane
 	Label  string // title, cut to fit
 	Tip    string // multi-line details: the SVG <title> and the popover
@@ -74,9 +74,9 @@ type row struct {
 type bar struct{ X, W, P50X, P95X float64 }
 
 type marker struct {
-	X    float64
-	Past bool   // before the axis start: drawn at the left edge
-	D    string // the diamond's path
+	X    float64 // clamped to the axis start
+	Past bool    // the target has passed
+	D    string  // the diamond's path
 }
 
 // layout computes the timeline: the goals lane, then one lane per repo in
@@ -143,7 +143,7 @@ func layout(r *roadmap.Roadmap, v *view) timeline {
 		}
 		if o.TargetDueAt != nil {
 			mx := x(*o.TargetDueAt)
-			m := &marker{X: max(mx, chartX0), Past: mx < chartX0}
+			m := &marker{X: max(mx, chartX0), Past: o.TargetDueAt.Before(now)}
 			m.D = fmt.Sprintf("M%s %dl6 6-6 6-6-6z", num(m.X), t.MidY-6)
 			rw.Target = m
 		}
@@ -171,7 +171,7 @@ func layout(r *roadmap.Roadmap, v *view) timeline {
 			continue
 		}
 		open++
-		goals.Rows = append(goals.Rows, mkRow(gl.ID, gl.Title, strings.Join(v.goalRepos(gl), " "), &gl.Outlook, v.goalTip(gl)))
+		goals.Rows = append(goals.Rows, mkRow(gl.ID, gl.Title, reposAttr(v.goalRepos(gl)...), &gl.Outlook, v.goalTip(gl)))
 	}
 	goals.Note = laneNote(open, done, r.Config.Model.WindowDays, nil)
 	addLane(goals)
@@ -186,7 +186,7 @@ func layout(r *roadmap.Roadmap, v *view) timeline {
 				continue
 			}
 			open++
-			l.Rows = append(l.Rows, mkRow(m.ID, m.Title, m.Repo, &m.Outlook, v.milestoneTip(m)))
+			l.Rows = append(l.Rows, mkRow(m.ID, m.Title, reposAttr(m.Repo), &m.Outlook, v.milestoneTip(m)))
 		}
 		l.Note = laneNote(open, done, r.Config.Model.WindowDays, rp.Concurrency)
 		addLane(l)

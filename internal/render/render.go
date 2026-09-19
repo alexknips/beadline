@@ -190,14 +190,14 @@ func (v *view) table() {
 	goals := group{Name: "Goals", Repo: laneGoals, Empty: "No goals."}
 	for _, n := range openFirst(goalOutlooks(r)) {
 		g := &r.Goals[n]
-		goals.Rows = append(goals.Rows, v.tableRow(g.ID, g.Title, strings.Join(v.goalRepos(g), " "), "goal", &g.Outlook))
+		goals.Rows = append(goals.Rows, v.tableRow(g.ID, g.Title, reposAttr(v.goalRepos(g)...), "goal", &g.Outlook))
 	}
 	v.Groups = append(v.Groups, goals)
 	for _, rp := range r.Repos {
 		grp := group{Name: rp.Name, Repo: rp.Name, Empty: "No open or recently closed milestones or epics."}
 		for _, n := range openFirst(milestoneOutlooks(r, rp.Name)) {
 			m := &r.Milestones[n]
-			grp.Rows = append(grp.Rows, v.tableRow(m.ID, m.Title, m.Repo, m.Type, &m.Outlook))
+			grp.Rows = append(grp.Rows, v.tableRow(m.ID, m.Title, reposAttr(m.Repo), m.Type, &m.Outlook))
 		}
 		v.Groups = append(v.Groups, grp)
 	}
@@ -255,6 +255,13 @@ func scheduleText(s string) string {
 		return "late"
 	}
 	return "—"
+}
+
+// reposAttr encodes the repos a row belongs to for the script's repo filter.
+// JSON, because a repo name may contain any character.
+func reposAttr(repos ...string) string {
+	b, _ := json.Marshal(repos)
+	return string(b)
 }
 
 // goalRepos are the repos a goal's row shows under when filtering: its own

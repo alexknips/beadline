@@ -49,7 +49,7 @@
   // Goal rows belong to every repo their members are in.
   const svg = doc.querySelector('svg.tl');
   const filter = doc.getElementById('repo-filter');
-  const inRepo = (el, repo) => !repo || (el.dataset.repos || '').split(' ').includes(repo);
+  const inRepo = (el, repo) => !repo || JSON.parse(el.dataset.repos || '[]').includes(repo);
   const setRepo = (repo) => {
     if (![...filter.options].some((o) => o.value === repo)) repo = '';
     filter.value = repo;

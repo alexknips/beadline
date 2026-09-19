@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;sha256-b9ddv14zW73IJ5m8SWN4DxW&#43;iIKiQG9lKTvhlcbxSLc=&#39;; script-src &#39;sha256-//A/QHosKy9MfvQhQaLmYPNPO6OMZQBO3LIg8HWo8N4=&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">
+<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;sha256-b9ddv14zW73IJ5m8SWN4DxW&#43;iIKiQG9lKTvhlcbxSLc=&#39;; script-src &#39;sha256-VPeP/gpocrW&#43;tTkn&#43;lGJ1gCR72vLU52dRfEwXe/wsug=&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">
 <meta name="generator" content="beadline test">
 <title>Fixture roadmap</title>
 <style>:root {
@@ -125,7 +125,7 @@ footer { margin-top: 24px; font-size: 12px; }
 <div class="seg" role="group" aria-label="View">
 <button type="button" data-view="timeline" aria-pressed="true">Timeline</button><button type="button" data-view="table" aria-pressed="false">Table</button>
 </div>
-<label>Repo <select id="repo-filter"><option value="">All repos</option><option>api</option><option>web</option><option>hq</option></select></label>
+<label>Repo <select id="repo-filter"><option value="">All repos</option><option value="api">api</option><option value="web">web</option><option value="hq">hq</option></select></label>
 <button type="button" id="theme" data-value="auto">Theme: auto</button>
 </div>
 </header>
@@ -144,7 +144,7 @@ footer { margin-top: 24px; font-size: 12px; }
 <g class="lane" data-repo="*goals" transform="translate(0 40)">
 <rect class="lane-bg" x="0" y="0" width="1000" height="50"/>
 <text class="lane-name" x="8" y="17">Goals</text><text class="lane-note" x="976" y="17">1 open · 1 done in the last 45 days</text>
-<g class="row" data-id="hq-g1" data-repos="api hq web" transform="translate(0 26)" tabindex="0" role="img" aria-label="Public launch. hq-g1 · goal in hq · no forecast yet. Members: Public API v1; Usage dashboard. Remaining 10 of 12 (16.7% done) · 3 human gates. Pace — · agents —"><title>Public launch
+<g class="row" data-id="hq-g1" data-repos="[&#34;api&#34;,&#34;hq&#34;,&#34;web&#34;]" transform="translate(0 26)" tabindex="0" role="img" aria-label="Public launch. hq-g1 · goal in hq · no forecast yet. Members: Public API v1; Usage dashboard. Remaining 10 of 12 (16.7% done) · 3 human gates. Pace — · agents —"><title>Public launch
 hq-g1 · goal in hq · no forecast yet
 Members: Public API v1; Usage dashboard
 Remaining 10 of 12 (16.7% done) · 3 human gates
@@ -155,13 +155,13 @@ Pace — · agents —</title>
 <g class="lane" data-repo="api" transform="translate(0 98)">
 <rect class="lane-bg alt" x="0" y="0" width="1000" height="74"/>
 <text class="lane-name" x="8" y="17">api</text><text class="lane-note" x="976" y="17">2 open · 3 agents</text>
-<g class="row" data-id="api-e1" data-repos="api" transform="translate(0 26)" tabindex="0" role="img" aria-label="Auth. api-e1 · epic in api · no forecast yet. Remaining 1 of 3 (66.7% done). Pace — · agents 3"><title>Auth
+<g class="row" data-id="api-e1" data-repos="[&#34;api&#34;]" transform="translate(0 26)" tabindex="0" role="img" aria-label="Auth. api-e1 · epic in api · no forecast yet. Remaining 1 of 3 (66.7% done). Pace — · agents 3"><title>Auth
 api-e1 · epic in api · no forecast yet
 Remaining 1 of 3 (66.7% done)
 Pace — · agents 3</title>
 <rect class="hit" x="0" y="0" width="1000" height="24"/><text class="label" x="20" y="16">Auth</text><text class="note" x="339.8" y="16">no forecast yet</text>
 </g>
-<g class="row" data-id="api-m1" data-repos="api" transform="translate(0 50)" tabindex="0" role="img" aria-label="Public API v1. api-m1 · milestone in api · no forecast yet. Goal: hq-g1. Target 2026-10-15: —. Remaining 4 of 6 (33.3% done) · 1 human gate. Pace — · agents 3"><title>Public API v1
+<g class="row" data-id="api-m1" data-repos="[&#34;api&#34;]" transform="translate(0 50)" tabindex="0" role="img" aria-label="Public API v1. api-m1 · milestone in api · no forecast yet. Goal: hq-g1. Target 2026-10-15: —. Remaining 4 of 6 (33.3% done) · 1 human gate. Pace — · agents 3"><title>Public API v1
 api-m1 · milestone in api · no forecast yet
 Goal: hq-g1
 Target 2026-10-15: —
@@ -173,7 +173,7 @@ Pace — · agents 3</title>
 <g class="lane" data-repo="web" transform="translate(0 180)">
 <rect class="lane-bg" x="0" y="0" width="1000" height="50"/>
 <text class="lane-name" x="8" y="17">web</text><text class="lane-note" x="976" y="17">1 open · 1 done in the last 45 days</text>
-<g class="row" data-id="web-e1" data-repos="web" transform="translate(0 26)" tabindex="0" role="img" aria-label="Usage dashboard. web-e1 · epic in web · no forecast yet. Goal: hq-g1. Remaining 6 of 6 (0% done) · 2 human gates. Pace — · agents —"><title>Usage dashboard
+<g class="row" data-id="web-e1" data-repos="[&#34;web&#34;]" transform="translate(0 26)" tabindex="0" role="img" aria-label="Usage dashboard. web-e1 · epic in web · no forecast yet. Goal: hq-g1. Remaining 6 of 6 (0% done) · 2 human gates. Pace — · agents —"><title>Usage dashboard
 web-e1 · epic in web · no forecast yet
 Goal: hq-g1
 Remaining 6 of 6 (0% done) · 2 human gates
@@ -207,18 +207,18 @@ Pace — · agents —</title>
 <thead><tr><th scope="col">Milestone</th><th scope="col">Status</th><th scope="col">Schedule</th><th scope="col">Left</th><th scope="col">Done</th><th scope="col">P50</th><th scope="col">P80</th><th scope="col">P95</th><th scope="col">Target</th><th scope="col">Agent</th><th scope="col">Human wait</th></tr></thead>
 <tbody data-repo="*goals">
 <tr class="group"><th colspan="11" scope="rowgroup">Goals</th></tr>
-<tr data-id="hq-g1" data-repos="api hq web"><th scope="row"><span class="t">Public launch</span> <span class="id">hq-g1 · goal</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">10 of 12</td><td class="n">16.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
-<tr data-id="hq-g2" data-repos="web"><th scope="row"><span class="id">hq-g2 · goal</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 2</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="hq-g1" data-repos="[&#34;api&#34;,&#34;hq&#34;,&#34;web&#34;]"><th scope="row"><span class="t">Public launch</span> <span class="id">hq-g1 · goal</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">10 of 12</td><td class="n">16.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="hq-g2" data-repos="[&#34;web&#34;]"><th scope="row"><span class="id">hq-g2 · goal</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 2</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
 </tbody>
 <tbody data-repo="api">
 <tr class="group"><th colspan="11" scope="rowgroup">api</th></tr>
-<tr data-id="api-e1" data-repos="api"><th scope="row"><span class="t">Auth</span> <span class="id">api-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">1 of 3</td><td class="n">66.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
-<tr data-id="api-m1" data-repos="api"><th scope="row"><span class="t">Public API v1</span> <span class="id">api-m1 · milestone</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">—</span></td><td class="n">4 of 6</td><td class="n">33.3%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">2026-10-15</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="api-e1" data-repos="[&#34;api&#34;]"><th scope="row"><span class="t">Auth</span> <span class="id">api-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">1 of 3</td><td class="n">66.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="api-m1" data-repos="[&#34;api&#34;]"><th scope="row"><span class="t">Public API v1</span> <span class="id">api-m1 · milestone</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">—</span></td><td class="n">4 of 6</td><td class="n">33.3%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">2026-10-15</td><td class="n">—</td><td class="n">—</td></tr>
 </tbody>
 <tbody data-repo="web">
 <tr class="group"><th colspan="11" scope="rowgroup">web</th></tr>
-<tr data-id="web-e1" data-repos="web"><th scope="row"><span class="t">Usage dashboard</span> <span class="id">web-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">6 of 6</td><td class="n">0%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
-<tr data-id="web-e2" data-repos="web"><th scope="row"><span class="t">Onboarding</span> <span class="id">web-e2 · epic</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 1</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="web-e1" data-repos="[&#34;web&#34;]"><th scope="row"><span class="t">Usage dashboard</span> <span class="id">web-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">6 of 6</td><td class="n">0%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="web-e2" data-repos="[&#34;web&#34;]"><th scope="row"><span class="t">Onboarding</span> <span class="id">web-e2 · epic</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 1</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
 </tbody>
 <tbody data-repo="hq">
 <tr class="group"><th colspan="11" scope="rowgroup">hq</th></tr>
@@ -284,7 +284,7 @@ Pace — · agents —</title>
   // Goal rows belong to every repo their members are in.
   const svg = doc.querySelector('svg.tl');
   const filter = doc.getElementById('repo-filter');
-  const inRepo = (el, repo) => !repo || (el.dataset.repos || '').split(' ').includes(repo);
+  const inRepo = (el, repo) => !repo || JSON.parse(el.dataset.repos || '[]').includes(repo);
   const setRepo = (repo) => {
     if (![...filter.options].some((o) => o.value === repo)) repo = '';
     filter.value = repo;

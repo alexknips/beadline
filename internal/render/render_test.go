@@ -212,7 +212,7 @@ func TestPageContent(t *testing.T) {
 	for _, want := range []string{
 		`<title>Fixture roadmap</title>`,
 		`<g class="lane" data-repo="*goals"`, `<g class="lane" data-repo="api"`, `<g class="lane" data-repo="web"`, `<g class="lane" data-repo="hq"`,
-		`data-id="hq-g1" data-repos="api hq web"`, // goal rows filter by their members' repos
+		`data-id="hq-g1" data-repos="[&#34;api&#34;,&#34;hq&#34;,&#34;web&#34;]"`, // goal rows filter by their members' repos
 		`<rect class="bar s-on_track"`, `<rect class="bar s-at_risk"`, `<rect class="bar s-late"`, `<rect class="bar s-none"`,
 		`class="target past"`, // hq-m9's target has passed
 		`ready to close`, `not planned`, `stalled`, `waits on an unloaded repo`,

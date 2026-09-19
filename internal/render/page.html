@@ -18,7 +18,7 @@
 <div class="seg" role="group" aria-label="View">
 <button type="button" data-view="timeline" aria-pressed="true">Timeline</button><button type="button" data-view="table" aria-pressed="false">Table</button>
 </div>
-<label>Repo <select id="repo-filter"><option value="">All repos</option>{{range .Repos}}<option>{{.}}</option>{{end}}</select></label>
+<label>Repo <select id="repo-filter"><option value="">All repos</option>{{range .Repos}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
 <button type="button" id="theme" data-value="auto">Theme: auto</button>
 </div>
 </header>
