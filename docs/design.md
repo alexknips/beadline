@@ -39,6 +39,28 @@ either asks a human to type dates or scales effort for human developers.
   pooling_strength = 10         # k: pseudo-observations a class borrows from its parent (ADR-1 §2)
   tail_cap_factor = 3           # samples capped at factor × longest observed duration (ADR-1 §2)
   ```
+  Every key but `[[repos]]` is optional. The defaults are the values shown, except that
+  `human_gate_title_patterns` defaults to `["^HUMAN:"]` and `concurrency` to `"measure"`. An unknown
+  key is an error, so a typo cannot silently fall back to a default.
+
+### Loading rules (bl-ya5.2)
+- **One graph across repos.** Exports are read in config order. bd prefixes keep IDs unique, so
+  edges and goal labels cross repositories freely. A second copy of an ID is reported and ignored.
+- **Edges.** `parent-child` gives the hierarchy, with the dependent as the child. `blocks`,
+  `conditional-blocks` and `waits-for` become blocking edges, because bd treats exactly these as hard
+  blockers. Other types (`related`, `discovered-from`, `tracks`, ...) carry no scheduling meaning and
+  are ignored.
+- **Not work.** Records whose type is in `infra_types` are dropped, as are ephemeral records (wisps)
+  and templates. Every edge to a dropped record goes with it. Non-issue records, such as memories,
+  are skipped.
+- **Human gate.** A bead is a gate when its title matches a gate pattern or a gate metadata key is
+  set to anything but `""`, `false`, `0` or `null`. A cleared hold is often left behind as `""`.
+- **Goal.** Every label that matches `goal_label_pattern` names a goal. The goal's own bead is
+  optional, because it often lives in a coordination repo that is not forecast.
+- **Reported, not fatal.** The loader reports dependencies on IDs that no loaded repo has, duplicate
+  IDs, and cycles (strongly connected components) of blocking or of parent-child edges. `beadline
+  check` prints them. It exits 1 only for a cycle among open beads, since no schedule can satisfy
+  one. Malformed JSON, by contrast, is fatal, and the error names the file and line.
 
 ## Model
 ### 1. Estimator (per bead, invisible)
@@ -104,8 +126,8 @@ license and with how beadline is built (by AI agents). Consequently:
 - No low-level bead display.
 
 ## Decisions — ADR-1 (bl-ya5.1)
-Status: **proposed, awaiting overseer confirmation** (design checkpoint). The implementation beads
-(bl-ya5.2 to bl-ya5.8) build on these decisions.
+Status: **Accepted (Alex, 2026-09-19)**. The implementation beads (bl-ya5.2 to bl-ya5.8) build on
+these decisions.
 
 ### 1. Language and distribution: Go, one static binary
 - **Decision.** Go (go.mod pins the minimum, currently 1.22), built with `CGO_ENABLED=0`. Users install
@@ -181,7 +203,7 @@ The same representation covers cycle time, queue latency and human-gate latency.
 | Path | Responsibility | Bead |
 |---|---|---|
 | `cmd/beadline` | `main`: passes `os.Args` and the standard streams to `internal/cli` | bl-ya5.1 |
-| `internal/cli` | subcommands (`forecast`, `render`, `serve`, `version`), flags, exit codes | bl-ya5.1, then each feature bead |
+| `internal/cli` | subcommands (`check`, `forecast`, `render`, `serve`, `version`), flags, exit codes | bl-ya5.1, then each feature bead |
 | `internal/config` | `beadline.toml` schema, defaults, validation | bl-ya5.2 |
 | `internal/load` | `bd export` JSONL (one per repo) → graph | bl-ya5.2 |
 | `internal/graph` | issues and edges: descendants, topological order, cycles, critical chain (clean room) | bl-ya5.2, bl-ya5.4 |

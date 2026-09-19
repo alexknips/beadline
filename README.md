@@ -28,6 +28,7 @@ measures instead:
 
 ## How it will work
 ```
+beadline check    --config beadline.toml        # load the exports; report cycles and dangling dependencies
 beadline forecast --config beadline.toml        # -> roadmap.json (+ optional estimated_minutes write-back via bd)
 beadline render   --out roadmap.html            # -> single-file static HTML, GitHub-Pages-able
 beadline serve                                  # local preview
