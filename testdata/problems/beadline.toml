@@ -1,0 +1,9 @@
+# Graph problems the loader reports: see ../README.md.
+
+[[repos]]
+name = "a"
+export = "a.jsonl"
+
+[[repos]]
+name = "b"
+export = "b.jsonl"
