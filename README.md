@@ -49,8 +49,8 @@ waiting on a person:
 - **`plan for <date> (80% chance)` is the date to plan around.** It is the date beadline expects 4
   forecasts in 5 to hold or beat — the one the [release gate](#accuracy) is measured against.
 - **`50/50: <date>` is the coin-flip date** — as many similar forecasts should land after it as
-  before. Right now it runs a little early (see [Accuracy](#accuracy)): treat it as the earliest a
-  milestone could plausibly land, not a real expectation.
+  before. It's close to calibrated now (see [Accuracy](#accuracy)): 50% over 60 days, a bit early at
+  42% over 118 days — treat it as a plausible date, not a guaranteed one.
 
 Both, plus the full quantile grid, are in `roadmap.json`; `beadline --explain <id>` prints what one
 item's dates rest on — its scope, the critical chain, and the work still to land.
@@ -61,20 +61,23 @@ each one against what actually closed, and `beadline check --backtest 60d` repla
 model before you trust it — both report coverage (how often each quantile held), bias, and a release
 gate: **v0.1 does not ship until the leaf-bead backtest holds its 80% date 70-90% of the time.**
 
-On the town's own history (1,256 beads across 5 repos, rolling-origin backtest):
+On the town's own history (1,263 beads across 5 repos, rolling-origin backtest, measured 2026-09-19 on
+commit `b3175ea`, after the Kaplan–Meier tail fix in bead `bl-ya5.13`):
 
 | Span | Leaf P50 held | Leaf P80 held | Gate |
 |---|---|---|---|
-| 118 days (32 origins, 129 leaf beads) | 36% | 78% (312/398) | PASS |
-| 60 days (16 origins, 51 leaf beads) | 34% | 90% (181/202) | PASS |
+| 118 days (32 origins, 129 leaf beads) | 42% | 75% (305/405) | PASS |
+| 60 days (16 origins, 51 leaf beads) | 50% | 89% (182/204) | PASS |
 
-High-level items (milestones/epics, 118-day span, 12 items): P80 held 85%.
+High-level items (milestones/epics, 118-day span, 12 items): P80 held 87%.
 
-**Caveats, honestly:** the 50/50 date runs early (leaf P50 held only 34-36%, not 50% — bead
-`bl-ya5.13` tracks a fix). High-level coverage above is indicative only — 7-12 items is far short of
-the ~20 needed to calibrate on; trust the leaf-bead numbers. The full study, including what actually
-fixed the model and what didn't, is in [`docs/design.md`](docs/design.md#4-evidence); release-to-release
-numbers are in [`CHANGELOG.md`](CHANGELOG.md).
+**Caveats, honestly:** the 50/50 date is close to calibrated now — 50% held over 60 days, 42% over
+118 days, still a bit early on the longer span. Plan around the 80% date; the 60-day P80 (89%) sits
+just under the gate's 90% ceiling, so it runs slightly conservative there. High-level coverage above
+is indicative only — 7-12 items is far short of the ~20 needed to calibrate on; trust the leaf-bead
+numbers. The full study, including the `bl-ya5.13` fix and what it changed, is in
+[`docs/design.md`](docs/design.md#4-evidence); release-to-release numbers are in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ## Privacy note
 `roadmap.html` is self-contained and needs no server, which means it embeds every scheduled bead's

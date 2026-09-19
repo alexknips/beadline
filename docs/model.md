@@ -76,9 +76,11 @@ does.
 
 ## Known limits, honestly
 
-- **The 50/50 date currently runs early.** On our own backtest it held only 34-36% of the time, not
-  50% — a follow-up (bead `bl-ya5.13`) tracks a fix. The 80% date is the well-calibrated one; plan
-  around it.
+- **The 50/50 date is close to calibrated, though still a bit early over longer spans.** After the
+  Kaplan–Meier tail fix (bead `bl-ya5.13`), our own backtest holds it 50% of the time over 60 days and
+  42% over 118 days (measured 2026-09-19, commit `b3175ea`) — up from 34-36% before the fix. The 80%
+  date remains the one to plan around; the 60-day P80 (89%) sits just under the gate's 90% ceiling, so
+  it runs a little conservative there.
 - **High-level (milestone/epic/goal) coverage is indicative, not tuned.** The backtest has only 7-12
   distinct items to grade against, far short of the ~20 needed to calibrate on; trust the leaf-bead
   numbers, which have hundreds.
