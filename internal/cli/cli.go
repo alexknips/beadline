@@ -27,6 +27,7 @@ type command struct {
 
 func commands() []command {
 	return []command{
+		{"check", "load the configured exports and report graph problems", runCheck},
 		{"forecast", "simulate the remaining graph and write roadmap.json", notImplemented("forecast")},
 		{"render", "render roadmap.json as a single-file HTML page", notImplemented("render")},
 		{"serve", "preview the rendered roadmap locally", notImplemented("serve")},
