@@ -61,9 +61,9 @@ either asks a human to type dates or scales effort for human developers.
   optional, because it often lives in a coordination repo that is not forecast.
 - **Reported, not fatal.** The loader reports dependencies on IDs that no loaded repo has, duplicate
   IDs, and cycles (strongly connected components) of blocking or of parent-child edges. `beadline
-  check` prints them (`beadline doctor` under ADR-2 §5). It exits 1 only for a cycle among open
-  beads, since no schedule can satisfy one. Malformed JSON, by contrast, is fatal, and the error names
-  the file and line.
+  doctor` prints them (the loader's former `check`, renamed by ADR-2 §5). It exits 1 only for a cycle
+  among open beads, since no schedule can satisfy one. Malformed JSON, by contrast, is fatal, and the
+  error names the file and line.
 
 ## Model
 ### 1. Estimator (per bead, invisible)
@@ -151,12 +151,95 @@ either asks a human to type dates or scales effort for human developers.
 - **CLI.** `beadline forecast` prints the table, or with `-json` the forecast; `-now`, `-runs` and `-seed`
   override the defaults, and `-write-back` applies the estimator's write-back (off by default). It needs
   each export at `<repo>/.beads/<file>` and runs `bd` there with `BEADS_DIR` pinned to that directory.
+  `-record` also records the forecast as a snapshot for calibration (§3).
   *Superseded by ADR-2 §5:* the default command `beadline [DIR|FILE ...]` forecasts.
 
-### 3. Calibration
-- Store each forecast snapshot. When a bead/milestone closes, record forecast-vs-actual. Report
-  coverage ("P80 held 78% of the time") and use it to widen/narrow intervals. *See ADR-2 §6* for the
-  snapshot format, `beadline check` and the release gate.
+### 3. Calibration (bl-ya5.6)
+A forecast is only worth what its track record says. `internal/calibrate` records forecasts, grades
+them once reality has moved on, and replays history to test the model before anyone trusts it.
+Both paths are graded and reported the same way. This implements ADR-2 §6, with two refinements
+recorded here: until the one-command CLI (bl-ya5.11) records a snapshot on every run,
+`forecast -record` writes them; and besides descoped and vanished, a void forecast can be parked or
+undated.
+
+- **Snapshots.** `beadline forecast -record` also writes the forecast as an immutable snapshot,
+  `beadline.snapshot/v1`, into `.beadline/snapshots/` beside beadline.toml (or `-snapshots DIR`).
+  - A snapshot records `generated_at` and `as_of` (the forecast's now, which the quantiles count
+    from). It also records `beadline_version` and `beadline_commit`, `model_version` (`adr-1`
+    until bl-ya5.12 moves the model to ADR-2), the seed and runs, the config echo with its
+    `config_sha256`, and `inputs` (each export's SHA-256 and the fingerprint, as in roadmap.json).
+  - `items[]` holds every open high-level bead and goal. Each has its status, `descendant_ids` (the
+    breakdown at as_of, members included for a goal), `remaining_ids` and `assumptions` (what the
+    dates leave out). A dated item also has P50, P80 and P95 as dates and `quantile_hours`: the grid
+    p05, p10, p20, p25, p30, p40, p50, p60, p70, p75, p80, p90, p95 and p99, in hours after as_of.
+  - `leaves[]` holds the same grid for every open leaf the schedule covers. A leaf is a bead with no
+    open child that is neither high-level nor a goal's bead. Parked and stuck beads have no forecast.
+  - `content_sha256` is the SHA-256 of the JSON without it: its top-level members sorted by key,
+    compact. A snapshot is written through a temporary file and a hard link, so it is create-only
+    and read-only (0444), and it is named `<as_of>_<hash>.json`.
+  - One snapshot a UTC day per model version and configuration is recorded. Later runs that day
+    keep the first, so a forecast run hourly does not outweigh the days it ran once.
+  - `-record` refuses `-now`: a snapshot must not be dated before the data it was made from.
+- **Grading: `beadline check`.** It reads the snapshots and skips, with a warning, any file whose
+  hash fails, whose schema is newer or whose layout is not this one. It grades every forecast
+  against the exports as they are now. Their horizon, the latest timestamp in any record, stands
+  for now. Each forecast gets an outcome:
+  - **resolved**: the bead closed; the actual time is `closed_at − as_of`.
+  - **open**: right-censored. A quantile is a known miss once the time since as_of passes it, and
+    pending before that.
+  - **void**, which is not scored:
+    - `descoped`: closed without delivery. Its close reason starts with duplicate, superseded, won't
+      fix, obsolete, not needed, not planned, moot, abandoned, descoped, out of scope, closing stale
+      or bulk close. Or `gc.work_outcome` is `no-op` or `abandoned`. Or it closed with 8 or more
+      beads of its repo in the same minute, a bulk close.
+    - `parked`: still open and deferred, or snoozed past the horizon. That is a decision, not a
+      miss. It also covers beads imported with a backdated `created_at`. On the town's repos these
+      are the 50 `recovered-br-shadow` beads, which would otherwise look open since June.
+    - `vanished`: the bead is gone from the exports.
+    - `undated`: closed with no `closed_at`.
+- **Scores.** Leaf beads come first because they are the honest sample: many beads, each forecast
+  on its own. High-level items come second.
+  - **Coverage.** For P50, P80 and P95 the report shows how many held out of the known outcomes, the
+    share, and its bounds once pending forecasts resolve (all late, or all in time).
+  - **Interval.** A 90% interval of the share resamples targets, not forecasts, because one bead
+    forecast at several moments is not independent evidence.
+  - **Stretch.** The factor 2^(k/6) by which a quantile would have had to stretch to hold at its
+    nominal level. Above 1 the intervals are too narrow; below 1, too wide. It says how far to widen
+    or narrow them. Nothing is re-tuned automatically.
+  - **Errors, on resolved forecasts.** The bias is the median of P50 − actual (negative means
+    forecasts too early). The report also gives the median |P50 − actual| and the CRPS from the
+    grid: twice the pinball loss integrated over the levels, each level standing for the levels
+    halfway to its neighbours. The PIT is counted in fifths.
+  - **Too few targets.** Fewer than 20 distinct targets are flagged as indicative, not something
+    to tune on.
+  - **Scope.** High-level forecasts are also scored apart by scope. Fixed scope means the breakdown
+    is unchanged since as_of. Changed scope means beads were added or removed, which tells scope
+    growth from model error.
+- **Backtest: `beadline check -backtest 60d [-step 3.5d] [-runs N]`.** A rolling-origin replay
+  from one set of exports.
+  - **Origins.** From midnight (UTC) on or before horizon − span, every step, up to a week before
+    the horizon, so outcomes have time to arrive.
+  - **Rewind.** At each origin `load.Exports.Graph(asOf)` rewinds the exports:
+    - Beads and dependencies created later are left out, and closes and starts after the origin
+      are undone.
+    - A bead not updated since keeps its status. A bead updated since is open, or `in_progress` if
+      it had started, with no `defer_until`, because its status then is unknown.
+    - Other fields (title, priority, labels, metadata) are taken as they are now.
+    - **Dependency skew.** Dependency timestamps can be skewed: bd stored some in the server's local
+      time and exported them as UTC. A whole-hour lag behind the later bead, shared by at least 20
+      dependencies and a tenth of those created since, is taken as that skew and corrected. On the
+      town's repos it is 2 hours from 2026-06-15.
+  - **Forecast and grading.** The forecast is the one `beadline forecast` makes, learning only
+    from the rewound graph, and it is graded like a snapshot.
+  - **Throughput baseline.** A baseline is scored alongside. It bootstraps the repo's daily
+    delivered closes over the model window until as many beads have closed as remain: 1 for a
+    leaf, the scheduled remaining work for an item. A goal counts all repos. It knows nothing of the
+    graph, of age or of priority, which is the point of comparing with it.
+  - **Not yet read:** status at a past moment from the Dolt events table. That would sharpen the
+    rewind of beads updated since the origin.
+- **Release gate (ADR-2, D3).** The backtest ends with `release gate (leaf P80 held 70%-90%): PASS`
+  or `FAIL`, with the reason for a failure. Fewer than 20 distinct leaf beads fail it. The exit
+  status stays 0, and the JSON (`-json`) carries `gate.pass` and every graded forecast.
 
 ### 4. Cost (optional adapter)
 - Given token usage per bead or per repo-week (adapters for orchestrator logs), forecast cost P50/P80
@@ -211,8 +294,8 @@ beads that actually closed, so it records exactly what went in.
     when P80 falls on or before the target, `at_risk` when only P50 does, and `late` when P50 falls
     after it or the target has passed. It is absent when there is no target, or no forecast yet to
     compare with. `Roadmap.Assess` computes it.
-- **`calibration`** holds `samples`, `p50_coverage` and `p80_coverage`. It is written by calibrate
-  (bl-ya5.6) and absent until then.
+- **`calibration`** holds `samples`, `p50_coverage` and `p80_coverage`. It is filled from the
+  snapshot grading of §3 once the forecast writes roadmap.json, and absent until then.
 
 `roadmap.Build` fills everything the graph alone determines. The forecaster then sets the forecast
 fields (and `stalled`) and calls `Assess` again.
@@ -351,7 +434,7 @@ The same representation covers cycle time, queue latency and human-gate latency.
 | Path | Responsibility | Bead |
 |---|---|---|
 | `cmd/beadline` | `main`: passes `os.Args` and the standard streams to `internal/cli` | bl-ya5.1 |
-| `internal/cli` | subcommands (`check`, `forecast`, `render`, `serve`, `version`; *superseded by ADR-2 §5*), flags, exit codes | bl-ya5.1, then each feature bead |
+| `internal/cli` | subcommands (`forecast`, `check`, `doctor`, `render`, `serve`, `version`; *superseded by ADR-2 §5*), flags, exit codes | bl-ya5.1, then each feature bead |
 | `internal/config` | `beadline.toml` schema, defaults, validation | bl-ya5.2 |
 | `internal/load` | `bd export` JSONL (one per repo) → graph | bl-ya5.2 |
 | `internal/graph` | issues and edges: descendants, topological order, cycles, critical chain (clean room) | bl-ya5.2, bl-ya5.4 |

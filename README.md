@@ -28,8 +28,11 @@ measures instead:
 
 ## How it will work
 ```
-beadline check    --config beadline.toml        # load the exports; report cycles and dangling dependencies
+beadline doctor   --config beadline.toml        # load the exports; report cycles and dangling dependencies
 beadline forecast --config beadline.toml        # -> roadmap.json (+ optional estimated_minutes write-back via bd)
+beadline forecast --record                      # also record today's forecast as a snapshot
+beadline check                                  # grade recorded forecasts against what closed since
+beadline check    --backtest 60d                # replay history: how often did P80 hold?
 beadline render   --out roadmap.html            # -> single-file static HTML, GitHub-Pages-able
 beadline serve                                  # local preview
 ```
