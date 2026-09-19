@@ -299,6 +299,30 @@ func (p *plan) readyAt(i *graph.Issue) time.Time {
 	return t
 }
 
+// leaves returns the schedulable open beads that are leaves, in plan (load)
+// order: no open child, not high-level, not a goal's own bead. A bead whose
+// children are all closed is one: it still has to be closed.
+func (p *plan) leaves() []int32 {
+	var out []int32
+	for k := range p.nodes {
+		i := p.nodes[k].issue
+		if i.HighLevel || p.goals[i.ID] {
+			continue
+		}
+		leaf := true
+		for _, c := range i.Children {
+			if !p.g.Issue(c).Closed() {
+				leaf = false
+				break
+			}
+		}
+		if leaf {
+			out = append(out, int32(k))
+		}
+	}
+	return out
+}
+
 // itemPlan is one roadmap item before simulation.
 type itemPlan struct {
 	out   Item

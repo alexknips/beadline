@@ -495,3 +495,65 @@ func TestHumanLag(t *testing.T) {
 		t.Errorf("remaining after 100 minutes of a 120-minute lag = %v minutes", got)
 	}
 }
+
+func TestGridAndLeaves(t *testing.T) {
+	g := newGraph(t, []*graph.Issue{
+		{ID: "m", HighLevel: true},
+		{ID: "a"}, {ID: "b"}, {ID: "h", HumanGate: true}, {ID: "d", Status: "closed"},
+		{ID: "p"}, {ID: "p1", Status: "closed"}, // all children closed: a leaf still to close
+		{ID: "x"},
+		{ID: "q", Status: "deferred"}, {ID: "s"}, // parked, and stuck behind it
+	}, child("a", "m"), child("b", "m"), child("h", "m"), child("d", "m"), blocks("a", "b"),
+		child("p1", "p"), blocks("q", "s"))
+	o := options(fixed{w: 60}, 30)
+	o.Concurrency = map[string]int{"r": 1}
+
+	res := run(t, g, o)
+	if res.Leaves != nil || res.Grid != nil || find(t, res, "m").GridHours != nil {
+		t.Errorf("no grid asked for: leaves %v, grid %v, m %v", res.Leaves, res.Grid, find(t, res, "m").GridHours)
+	}
+
+	o.Grid = []float64{0.1, 0.5, 0.9}
+	res = run(t, g, o)
+	if !reflect.DeepEqual(res.Grid, o.Grid) {
+		t.Errorf("grid = %v", res.Grid)
+	}
+	if got := find(t, res, "m").GridHours; !reflect.DeepEqual(got, []float64{2, 2, 2}) {
+		t.Errorf("m grid = %v, want a then b on one agent: 2 h at every level", got)
+	}
+	// One agent: a, then b (it outranks x once a closes), then x. The gate
+	// waits 30 minutes and holds no agent; p closes as soon as it is ready.
+	want := []Leaf{
+		{ID: "a", Repo: "r", GridHours: []float64{1, 1, 1}},
+		{ID: "b", Repo: "r", GridHours: []float64{2, 2, 2}},
+		{ID: "h", Repo: "r", GridHours: []float64{0.5, 0.5, 0.5}},
+		{ID: "p", Repo: "r", GridHours: []float64{0, 0, 0}},
+		{ID: "x", Repo: "r", GridHours: []float64{3, 3, 3}},
+	}
+	if !reflect.DeepEqual(res.Leaves, want) {
+		t.Errorf("leaves = %+v\nwant     %+v", res.Leaves, want)
+	}
+
+	for _, bad := range [][]float64{{0, 0.5}, {0.5, 1}, {0.5, 0.5}, {0.8, 0.2}} {
+		o.Grid = bad
+		if _, err := Run(g, o); err == nil || !strings.Contains(err.Error(), "grid") {
+			t.Errorf("grid %v: err = %v", bad, err)
+		}
+	}
+}
+
+func TestGridIsNearestRank(t *testing.T) {
+	g := newGraph(t, []*graph.Issue{{ID: "m", HighLevel: true}, {ID: "a"}}, child("a", "m"))
+	o := randomOptions(400, 3)
+	o.Grid = []float64{0.05, 0.5, 0.8, 0.95, 0.99}
+	res := run(t, g, o)
+	m := find(t, res, "m")
+	for n, p := range []*Point{m.P50, m.P80, m.P95} {
+		if got, want := m.GridHours[n+1], hours(after(p)); math.Abs(got-want) > 0.01 {
+			t.Errorf("grid level %v = %v h, but the point says %v h", o.Grid[n+1], got, want)
+		}
+	}
+	if !sort.Float64sAreSorted(m.GridHours) || !reflect.DeepEqual(res.Leaves[0].GridHours, m.GridHours) {
+		t.Errorf("grid %v, leaf a %v: want ascending, and a's close is m's finish", m.GridHours, res.Leaves[0].GridHours)
+	}
+}

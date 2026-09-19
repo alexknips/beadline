@@ -14,6 +14,11 @@ import (
 	"github.com/alexknips/beadline/internal/graph"
 )
 
+// ModelVersion names the revision of the forecasting model: the estimator
+// and this simulation (docs/design.md, ADR-1). Snapshots record it, so
+// calibration never mixes the track records of two models.
+const ModelVersion = "adr-1"
+
 // Sampler draws the durations of one open work bead, in minutes.
 // estimate.Sampler satisfies it.
 type Sampler interface {
@@ -49,6 +54,11 @@ type Options struct {
 	// Workers bounds the goroutines that run simulations; 0 means
 	// GOMAXPROCS. Results do not depend on it.
 	Workers int
+	// Grid lists quantile levels, each strictly between 0 and 1 and in
+	// ascending order. When set, every dated item carries its finish at each
+	// level (Item.GridHours), and Result.Leaves forecasts the close of every
+	// open leaf the schedule covers: the grid that calibration scores.
+	Grid []float64
 }
 
 func (o *Options) validate() error {
@@ -65,6 +75,12 @@ func (o *Options) validate() error {
 	for repo, n := range o.Concurrency {
 		if n < 0 {
 			errs = append(errs, fmt.Errorf("concurrency of repo %s must not be negative, got %d", repo, n))
+		}
+	}
+	for n, q := range o.Grid {
+		if !(q > 0 && q < 1) || (n > 0 && !(q > o.Grid[n-1])) {
+			errs = append(errs, fmt.Errorf("grid levels must ascend strictly between 0 and 1, got %v", o.Grid))
+			break
 		}
 	}
 	return errors.Join(errs...)
@@ -104,6 +120,21 @@ type Result struct {
 	Concurrency map[string]int `json:"concurrency"` // as simulated; 0 = unlimited
 	Items       []Item         `json:"items"`       // open high-level beads, in load order
 	Goals       []Item         `json:"goals"`       // goals with open work, by ID
+	// Grid echoes Options.Grid, the levels of every GridHours.
+	Grid []float64 `json:"grid,omitempty"`
+	// Leaves forecasts the close of every open leaf that the schedule
+	// covers, in load order; only with Options.Grid. A leaf is a bead with no
+	// open children that is neither high-level nor a goal's own bead: a
+	// work bead or a gate. Parked and stuck beads have no forecast.
+	Leaves []Leaf `json:"leaves,omitempty"`
+}
+
+// Leaf is the forecast close of one open leaf bead.
+type Leaf struct {
+	ID   string `json:"id"`
+	Repo string `json:"repo"`
+	// GridHours is the close at each Grid level, in hours from now.
+	GridHours []float64 `json:"grid_hours"`
 }
 
 // Item is the forecast of one high-level bead or goal.
@@ -143,6 +174,9 @@ type Item struct {
 	// CriticalChain is the chain of beads that set the P80 date, first to
 	// last: each one could not start before the one before it finished.
 	CriticalChain []string `json:"critical_chain,omitempty"`
+	// GridHours is the finish at each Result.Grid level, in hours from now;
+	// nil without Options.Grid or dates.
+	GridHours []float64 `json:"grid_hours,omitempty"`
 }
 
 // Point is one quantile of an item's finish. The run that sets it splits
@@ -163,12 +197,21 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 	p := newPlan(g, &o)
 	items := p.items()
 
-	// finish[k][run] is item k's finish in minutes from now.
+	// finish[k][run] is item k's finish in minutes from now, leafFinish[j][run]
+	// that of leaf j.
 	finish := make([][]float64, len(items))
 	for k := range finish {
 		if len(items[k].nodes) > 0 {
 			finish[k] = make([]float64, o.Runs)
 		}
+	}
+	var leaves []int32
+	if len(o.Grid) > 0 {
+		leaves = p.leaves()
+	}
+	leafFinish := make([][]float64, len(leaves))
+	for j := range leafFinish {
+		leafFinish[j] = make([]float64, o.Runs)
 	}
 	workers := o.Workers
 	if workers <= 0 {
@@ -193,12 +236,15 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 						finish[k][run] = s.last(it.nodes)
 					}
 				}
+				for j, k := range leaves {
+					leafFinish[j][run] = s.finish[k]
+				}
 			}
 		}()
 	}
 	wg.Wait()
 
-	res := &Result{Now: o.Now, Runs: o.Runs, Seed: o.Seed, Concurrency: p.concurrency(), Items: []Item{}, Goals: []Item{}}
+	res := &Result{Now: o.Now, Runs: o.Runs, Seed: o.Seed, Concurrency: p.concurrency(), Items: []Item{}, Goals: []Item{}, Grid: o.Grid}
 	traces := map[int]*sim{}
 	trace := func(run int) *sim {
 		if s := traces[run]; s != nil {
@@ -219,6 +265,7 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 			}
 			out.P50, out.P80, out.P95 = point(0.5), point(0.8), point(0.95)
 			out.CriticalChain = trace(order[nearestRank(0.8, len(order))]).chain(it.nodes)
+			out.GridHours = gridHours(finish[k], o.Grid)
 			if out.DueAt != nil {
 				limit := minutes(out.DueAt.Sub(o.Now))
 				n := 0
@@ -237,7 +284,26 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 			res.Items = append(res.Items, out)
 		}
 	}
+	for j, k := range leaves {
+		i := p.nodes[k].issue
+		res.Leaves = append(res.Leaves, Leaf{ID: i.ID, Repo: i.Repo, GridHours: gridHours(leafFinish[j], o.Grid)})
+	}
 	return res, nil
+}
+
+// gridHours returns the nearest-rank quantiles of finishes (minutes from
+// now) at the grid levels, in hours; nil for an empty grid.
+func gridHours(finishes []float64, grid []float64) []float64 {
+	if len(grid) == 0 {
+		return nil
+	}
+	sorted := append([]float64(nil), finishes...)
+	sort.Float64s(sorted)
+	out := make([]float64, len(grid))
+	for n, q := range grid {
+		out[n] = hours(math.Min(sorted[nearestRank(q, len(sorted))], maxMinutes))
+	}
+	return out
 }
 
 // source returns the random source of one run.
