@@ -45,7 +45,7 @@ func Build(g *graph.Graph, rep *load.Report, cfg *config.Config, now time.Time) 
 	r := &Roadmap{
 		SchemaVersion: SchemaVersion,
 		GeneratedAt:   now,
-		Config:        configOf(cfg),
+		Config:        ConfigOf(cfg),
 		Inputs:        Inputs{Exports: []Export{}},
 		Repos:         repos(g, cfg),
 		Goals:         []Goal{},
@@ -211,7 +211,8 @@ func repos(g *graph.Graph, cfg *config.Config) []Repo {
 	return out
 }
 
-func configOf(cfg *config.Config) Config {
+// ConfigOf echoes cfg as roadmap.json and snapshots record it.
+func ConfigOf(cfg *config.Config) Config {
 	c := Config{
 		Repos: make([]ConfigRepo, len(cfg.Repos)),
 		Conventions: Conventions{
