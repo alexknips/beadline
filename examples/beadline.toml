@@ -1,0 +1,34 @@
+# beadline.toml — example: two product repos plus a lightweight goal-tracking
+# repo, forecast together. Copy this next to wherever you run `beadline` and
+# adjust the paths; drop any [expert] key you don't want to change from its
+# default (see docs/model.md for what each one does).
+
+repos = [
+  "../api",                       # a repo directory with .beads: read live via `bd export`
+  "../web",
+  "exports/coordination.jsonl",   # or a `bd export` JSONL file, e.g. from a repo you don't have checked out
+]
+
+[expert]
+# Trust api's own measured concurrency, but cap web at 2 agents at once.
+agents = { web = 2 }
+
+# Only these types get a row on the roadmap; everything else is scheduled
+# but counted only as part of a milestone or epic's remaining work.
+roadmap_types = ["milestone", "epic"]
+
+# A label like `goal:launch-q4` on a bead in any of the three repos above
+# links it to the cross-repo goal "launch-q4"; the goal's date is the
+# latest of its members'.
+goal_label = "^goal:(?P<id>.+)$"
+
+# Beads waiting on a person: title starts with "HUMAN:", or either
+# metadata key is set to something truthy.
+human_gate = { titles = ["^HUMAN:"], metadata = ["awaiting_signoff", "needs_review"], hours_prior = 24 }
+
+# Leave the coordination repo's own tracking bead off the roadmap; it's
+# still scheduled, since other beads may depend on it.
+hide = ["coordination-tracking"]
+
+# Learn from the last two months of closed work.
+history_days = 60

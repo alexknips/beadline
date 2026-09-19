@@ -7,8 +7,21 @@ beadline reads one or more beads databases, learns how long your agents actually
 remaining dependency graph, and renders a roadmap of your **high-level** beads (milestones, epics,
 goals) with P50/P80 completion dates — without anyone typing an estimate.
 
-> Status: **design phase**. beadline is being built in the open by AI agents orchestrated with
+> Status: **implemented, gate-passed, pre-release.** The model, the one-command CLI and the accuracy
+> loop below are all on `main`, and the release gate passes on the town's own history — see
+> [Accuracy](#accuracy). beadline is built in the open by AI agents orchestrated with
 > [Gas City](https://github.com/gastownhall/gastown); the plan lives in this repo's own beads.
+
+## Quickstart
+
+```
+beadline ~/code/repo
+```
+
+That's the whole thing. It reads `~/code/repo`'s `.beads` live, forecasts, and writes `roadmap.html`
+(open it in a browser) and `roadmap.json` next to it — plus a line per milestone, epic and goal like
+"plan for 2026-10-02 (80% chance) · 50/50: 2026-09-28 · 3 of 11 left". A repo with `.beads` in the
+current directory needs no path at all. `beadline help` lists every flag.
 
 ## Why
 The beads ecosystem has excellent viewers, boards and Gantt renderers. What none of them answer is
@@ -26,25 +39,84 @@ measures instead:
   "waiting on a human" term — shown separately, because that is usually where the date moves.
 - **It calibrates itself.** Every closed bead compares forecast to actual; the page shows how often
   P80 held.
-- **High-level only.** Milestones, epics and cross-repo goals are what you see; everything below is math.
+- **High-level only.** Milestones, epics and cross-repo goals are what you see; everything below is
+  math.
 
-## How it works
-```
-beadline                                   # in a repo with .beads: roadmap.html + roadmap.json in .
-beadline ../api ../web exports/hq.jsonl    # several repos, read live with bd, or bd export files
-beadline --explain api-m1                  # what one milestone's dates rest on
-beadline check                             # grade past forecasts against what closed since
-beadline check --backtest 60d              # replay history: how often did the 80% date hold?
-beadline doctor                            # check the data: cycles, dangling dependencies, duplicates
-```
-Every run forecasts, writes a single-file static `roadmap.html` (GitHub-Pages-able) and
-`roadmap.json`, prints each milestone as "plan for <date> (80% chance) · 50/50: <date>", and records
-a snapshot that `beadline check` grades later. One repo needs no config; several, or a changed
-default, take a `beadline.toml` of `repos = [...]` plus an `[expert]` table. Conventions (which types
-are "high level", which label links a goal to work across repos, what marks a human gate, agents per
-repo) are configuration, not assumptions. `beadline help` lists every flag.
+## Reading the dates
+Every milestone, epic and goal gets two dates, plus how much work is left and whether anything is
+waiting on a person:
 
-See [`docs/design.md`](docs/design.md) for the model and the open decisions.
+- **`plan for <date> (80% chance)` is the date to plan around.** It is the date beadline expects 4
+  forecasts in 5 to hold or beat — the one the [release gate](#accuracy) is measured against.
+- **`50/50: <date>` is the coin-flip date** — as many similar forecasts should land after it as
+  before. Right now it runs a little early (see [Accuracy](#accuracy)): treat it as the earliest a
+  milestone could plausibly land, not a real expectation.
+
+Both, plus the full quantile grid, are in `roadmap.json`; `beadline --explain <id>` prints what one
+item's dates rest on — its scope, the critical chain, and the work still to land.
+
+## Accuracy
+Every run of `beadline` records an immutable snapshot of its forecast. `beadline check` later grades
+each one against what actually closed, and `beadline check --backtest 60d` replays history to test the
+model before you trust it — both report coverage (how often each quantile held), bias, and a release
+gate: **v0.1 does not ship until the leaf-bead backtest holds its 80% date 70-90% of the time.**
+
+On the town's own history (1,256 beads across 5 repos, rolling-origin backtest):
+
+| Span | Leaf P50 held | Leaf P80 held | Gate |
+|---|---|---|---|
+| 118 days (32 origins, 129 leaf beads) | 36% | 78% (312/398) | PASS |
+| 60 days (16 origins, 51 leaf beads) | 34% | 90% (181/202) | PASS |
+
+High-level items (milestones/epics, 118-day span, 12 items): P80 held 85%.
+
+**Caveats, honestly:** the 50/50 date runs early (leaf P50 held only 34-36%, not 50% — bead
+`bl-ya5.13` tracks a fix). High-level coverage above is indicative only — 7-12 items is far short of
+the ~20 needed to calibrate on; trust the leaf-bead numbers. The full study, including what actually
+fixed the model and what didn't, is in [`docs/design.md`](docs/design.md#4-evidence); release-to-release
+numbers are in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Privacy note
+`roadmap.html` is self-contained and needs no server, which means it embeds every scheduled bead's
+title — in the timeline's hover details, the table, and the raw `roadmap-data` JSON it carries. If your
+bead titles are sensitive, don't publish it somewhere those titles shouldn't be seen, including a public
+GitHub Pages site. Use `[expert] hide` (see [`docs/model.md`](docs/model.md)) to leave specific items
+off the roadmap, or serve the page somewhere access-controlled instead.
+
+## Getting forecast-friendly beads
+The model learns from how your beads actually behave, so a few habits make its forecasts sharper:
+
+- **Decompose milestones at creation**, not as you go. Milestones filed as one shot before work
+  started grew to about 1.00× their filed scope by a quarter of the way through; milestones filled in
+  progressively grew to 2.46×. Scope that shows up late looks like a miss beadline couldn't have seen
+  coming.
+- **Close stragglers instead of letting them ride.** A handful of beads left open long past their
+  natural close, then closed by a decision rather than delivery, cause the largest single errors in the
+  backtest.
+- **Mark non-delivering closes.** Set `gc.work_outcome` to `no-op` or `abandoned`, or use a close
+  reason that says so (`duplicate`, `superseded`, `won't fix`, `not needed`, `descoped`, …). beadline
+  already excludes these from both training and grading — but only the ones it can recognise; an
+  unmarked non-delivery teaches the model a false short cycle time.
+
+## Configuration
+One repo with `.beads` needs nothing. Several repos, or a changed default — which types count as "high
+level", what marks a human gate, agents per repo, or the model's own knobs — take a `beadline.toml`.
+See [`examples/beadline.toml`](examples/beadline.toml) for a worked multi-repo example and
+[`docs/model.md`](docs/model.md) for what each `[expert]` key does and how the model behind the dates
+works.
+
+## Keeping a roadmap current
+A roadmap is worth most when it's fresh. [`examples/github-workflows/roadmap.yml`](examples/github-workflows/roadmap.yml)
+is a copyable GitHub Actions workflow: it installs `beadline` and `bd`, forecasts, and publishes
+`roadmap.html` to GitHub Pages on a schedule. The same recipe works with any scheduler — cron, a
+systemd timer, … — run `beadline` against your repos and serve the resulting `roadmap.html` however
+you serve static files.
+
+## Relationship to beads_viewer
+beadline takes no code from `bv` ([Dicklesworthstone/beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)):
+its license rider is incompatible with beadline's plain MIT license and with how beadline is built (by
+AI agents). See [`docs/design.md`](docs/design.md#relationship-to-beads_viewer-bv) for the clean-room
+policy this project holds to.
 
 ## Contributing
 Issues and PRs welcome. This project tracks its own work in beads (`.beads/`); `make check` is the
