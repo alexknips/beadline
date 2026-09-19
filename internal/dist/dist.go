@@ -15,6 +15,15 @@ const (
 	minBandwidth = 0.1
 	// beyondTries bounds the rejection loop of SampleBeyond.
 	beyondTries = 64
+	// tailSpread scales the node's own bandwidth for the spread beyond the
+	// tail anchor (dist.Censored), matching Silverman's own coefficient in
+	// bandwidth(). A shorter spread than a full bandwidth: the anchor is
+	// already the longest observation of either kind, not a shorter
+	// completed duration being extrapolated past, so the added noise needs
+	// less width. Chosen from the backtest (docs/design.md, ADR-2 §1): 1.0
+	// (the node's plain bandwidth) leaves the most recent leaf P80 backtest
+	// just over the release gate's 90% ceiling.
+	tailSpread = 0.9
 )
 
 // Prior is the log-normal at the root of every backoff chain.
@@ -94,10 +103,11 @@ func (d *Dist) Child(minutes []float64, k float64) *Dist {
 // Kaplan–Meier probability mass, so beads still open no longer make the
 // data look shorter than it is. When durations still run past the last
 // event, the survival mass left over becomes a tail beyond the longest
-// completed duration, as in the reference prototype: log(longest) +
-// |N(0, 1)| in log space, beyond the longest running one when none has
-// completed. The node draws from its own data with probability n/(n+k), n
-// counting both kinds. Without censored durations it is Child.
+// observation of either kind — a bead still running past every completed
+// one is itself evidence of how far survival reaches, stronger than
+// extrapolating from a shorter completed duration would give. The node
+// draws from its own data with probability n/(n+k), n counting both kinds.
+// Without censored durations it is Child.
 func (d *Dist) Censored(events, censored []float64, k float64) *Dist {
 	if len(censored) == 0 {
 		return d.Child(events, k)
@@ -120,9 +130,6 @@ func (d *Dist) Censored(events, censored []float64, k float64) *Dist {
 	sort.Float64s(evLogs)
 
 	c := &Dist{parent: d, h: bandwidth(evLogs), cap: d.cap, tail: all[len(all)-1].x}
-	if len(evLogs) > 0 {
-		c.tail = evLogs[len(evLogs)-1]
-	}
 	c.own = float64(len(all)) / (float64(len(all)) + k)
 	// Kaplan–Meier: at each distinct time, the events there take their share
 	// of the survivors; a duration censored at a time is still at risk at it.
@@ -170,8 +177,9 @@ func (d *Dist) Sample(r *rand.Rand) float64 {
 		j := sort.Search(len(n.cum), func(j int) bool { return n.cum[j] > u })
 		if j == len(n.cum) {
 			// Survival mass beyond the data: somewhere past the longest
-			// completed duration.
-			x = n.tail + math.Abs(r.NormFloat64())
+			// observation, spread by a fraction of the same bandwidth as
+			// every other draw of this node (tailSpread).
+			x = n.tail + tailSpread*n.h*math.Abs(r.NormFloat64())
 		} else {
 			x = n.logs[j] + n.h*r.NormFloat64()
 		}

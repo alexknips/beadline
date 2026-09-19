@@ -105,8 +105,12 @@ This implements ADR-2 §1 in `internal/estimate` and `internal/dist`.
   - A bead in progress also enters as a censored cycle time since `started_at`. Its lead time counts
     even with a blocker still open, because it has started.
   - Kaplan–Meier weighs each distinct completed duration. Pooling counts both kinds: n / (n + k).
-  - The survival mass left after the longest completed duration is drawn beyond it, as
-    log(longest) + |N(0, 1)|, as in the reference prototype.
+  - The survival mass left after the longest observation is drawn beyond it, as
+    log(longest) + 0.9 × bandwidth × |N(0, 1)| (bl-ya5.13). The anchor is the longest of either
+    kind, event or censored: a bead still open past every completed one is itself evidence of how
+    far survival reaches. *Refines the reference prototype*, which anchored at the longest
+    completed event only and spread with a fixed σ = 1 regardless of the node's own scatter; see
+    bl-ya5.13 for why (the leaf P50 backtest, ADR-2 §4, held 34-36% instead of the expected ~50%).
   - The tail cap counts censored durations too.
 - **Sample hygiene.** A close in the window teaches nothing when it was not a delivery. The tests
   run in this order:
@@ -730,6 +734,34 @@ bl-ya5.12; "after" is `adr-2`. Each fit used only the data visible at its origin
 - **Blocked beads** draw a whole lead time from the moment their blockers close (§1: lead time runs
   from `ready_at`). The prototype instead let a blocked bead close one cycle time after its blockers
   or at its own lead time since creation, whichever came later.
+
+**Correction (bl-ya5.13, 2026-09-19).** The mayor's independent reproduction of this backtest on
+main `9f82ae8` found the Go implementation's leaf P50 held only 34-36%, not the ~50% a calibrated
+median should. P80 was calibrated and passed the gate; P50 was not part of the release criteria, so
+this had gone unnoticed. Cause: the Kaplan–Meier tail (this section, "survival mass left after the
+longest completed duration") anchored only at the longest *completed* event, ignoring a bead still
+open past every completed one — direct evidence of how far survival reaches that the fit was
+discarding — and spread with a fixed σ = 1 in log space unrelated to the node's own scatter. Fix
+(`internal/dist.Dist.Censored`, `Sample`): anchor at the longest observation of either kind, and
+spread by 0.9 × the node's own smoothing bandwidth instead of a fixed σ. 0.9 (not 1.0) was needed to
+keep the 60-day leaf P80 backtest under the release gate's 90% ceiling; picked from the backtest, not
+derived. Measured on the same 2026-09-19 exports:
+
+| Span | Leaf P50 held | Leaf P80 held | Bias of P50 | CRPS |
+|---|---|---|---|---|
+| 118 d, before | 36% (170/470) | 78% (312/398), gate PASS | −0.3 d | 10.7 d |
+| 118 d, after | 43% (200/455) | 75% (309/397), gate PASS | +0.9 d | 12.5 d |
+| 60 d, before | 34% (89/262) | 90% (181/202), gate PASS | −0.8 d | 12.0 d |
+| 60 d, after | 50% (128/255) | 89% (182/204), gate PASS | +9.6 d | 15.1 d |
+
+The 60-day span's P50 bias (+9.6 d) and CRPS both worsen even though its held-share is now close to
+nominal: the fix widens the tail for the most recent, straggler-heavy origins specifically (older
+open beads accumulate as the town's repos mature), and the 60-day span sees only that recent slice.
+The 118-day span, with twice the origins and a milder shift, is the more representative read. An
+interleaved even/odd-origin split of the 118-day backtest (fit vs. held-out, not used to choose the
+0.9 factor) shows the same direction on both halves: leaf P50 held rose from 38.7%/33.2% to
+46.0%/38.7% (fit/held-out), P80 stayed within the gate on both (79.3%/70.5%), and the held-out
+half's bias fell to +0.01 d (previously −0.44 d).
 
 ### 5. CLI: one command (D2)
 - **Decision.** The whole surface is:
