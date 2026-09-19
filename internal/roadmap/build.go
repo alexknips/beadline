@@ -222,7 +222,9 @@ func ConfigOf(cfg *config.Config) Config {
 			HumanGateMetadataKeys:  cfg.Conventions.HumanGateMetadataKeys,
 			InfraTypes:             cfg.Conventions.InfraTypes,
 		},
-		Model: Model(cfg.Model),
+		Model:    Model(cfg.Model),
+		Hide:     cfg.Hide,
+		Settings: cfg.NonDefault(),
 	}
 	for n, rc := range cfg.Repos {
 		c.Repos[n] = ConfigRepo{Name: rc.Name, Export: rc.Export, Concurrency: Concurrency(rc.Concurrency.Max)}
@@ -252,4 +254,53 @@ func Fingerprint(cfg *config.Config) (Inputs, error) {
 	}
 	in.Fingerprint = "sha256:" + hex.EncodeToString(all.Sum(nil))
 	return in, nil
+}
+
+// SetInputs fingerprints the exports a run read, in config order, and marks
+// the repos that could not be read. The fingerprint covers the exports that
+// were read, as Fingerprint does for files.
+func (r *Roadmap) SetInputs(exports []load.Export) {
+	in := Inputs{Exports: []Export{}}
+	all := sha256.New()
+	failed := map[string]string{}
+	for _, e := range exports {
+		if e.Err != nil {
+			failed[e.Repo] = e.Err.Error()
+			continue
+		}
+		sum := sha256.Sum256(e.Data)
+		hexSum := hex.EncodeToString(sum[:])
+		in.Exports = append(in.Exports, Export{Repo: e.Repo, Path: e.Path, Live: e.Live, SHA256: hexSum, Bytes: int64(len(e.Data))})
+		fmt.Fprintf(all, "%s\t%s\n", e.Repo, hexSum)
+	}
+	in.Fingerprint = "sha256:" + hex.EncodeToString(all.Sum(nil))
+	r.Inputs = in
+	for n := range r.Repos {
+		r.Repos[n].Error = failed[r.Repos[n].Name]
+	}
+}
+
+// Hide leaves the milestones and goals with these IDs off the roadmap.
+func (r *Roadmap) Hide(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	hide := map[string]bool{}
+	for _, id := range ids {
+		hide[id] = true
+	}
+	milestones := r.Milestones[:0]
+	for _, m := range r.Milestones {
+		if !hide[m.ID] {
+			milestones = append(milestones, m)
+		}
+	}
+	r.Milestones = milestones
+	goals := r.Goals[:0]
+	for _, g := range r.Goals {
+		if !hide[g.ID] {
+			goals = append(goals, g)
+		}
+	}
+	r.Goals = goals
 }

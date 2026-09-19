@@ -42,6 +42,8 @@ button, select {
 button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .banner { border: 1px solid var(--line); border-left: 4px solid var(--none); border-radius: 6px; padding: 8px 12px; background: var(--lane); }
+.banner.error { border-left-color: var(--late); }
+.banner p, .banner ul { margin: 0; }
 .summary { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .chip::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--none); }

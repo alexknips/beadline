@@ -20,6 +20,7 @@ func run(args ...string) (code int, stdout, stderr string) {
 }
 
 func TestRun(t *testing.T) {
+	multirepo := "../../testdata/multirepo/beadline.toml"
 	tests := []struct {
 		name       string
 		args       []string
@@ -27,27 +28,50 @@ func TestRun(t *testing.T) {
 		wantStdout string
 		wantStderr string
 	}{
-		{"no args prints usage to stderr", nil, ExitUsage, "", "Usage:"},
-		{"help", []string{"help"}, ExitOK, "Commands:", ""},
-		{"-h", []string{"-h"}, ExitOK, "Commands:", ""},
-		{"--help", []string{"--help"}, ExitOK, "Commands:", ""},
-		{"unknown command", []string{"frobnicate"}, ExitUsage, "", `unknown command "frobnicate"`},
+		{"help", []string{"help"}, ExitOK, "beadline [PATH...] [flags]", ""},
+		{"-h", []string{"-h"}, ExitOK, "Expert flags:", ""},
+		{"--help", []string{"--help"}, ExitOK, "Expert flags:", ""},
+		{"help check", []string{"help", "check"}, ExitOK, "Usage: beadline check [PATH...]", ""},
+		{"help doctor", []string{"help", "doctor"}, ExitOK, "Usage: beadline doctor [PATH...]", ""},
+		{"help unknown", []string{"help", "chek"}, ExitUsage, "", `unknown command "chek"; did you mean 'beadline check'?`},
+		{"help stray", []string{"help", "check", "doctor"}, ExitUsage, "", "takes one command"},
 		{"version", []string{"version"}, ExitOK, "beadline ", ""},
-		{"doctor clean fixture", []string{"doctor", "--config", "../../testdata/multirepo/beadline.toml"}, ExitOK, "15 issues, 4 high-level, 2 goals, 3 human gates\n", ""},
-		{"doctor problems fixture", []string{"doctor", "-config", "../../testdata/problems/beadline.toml"}, ExitFailure, "1 error, 4 warnings", "error: blocking cycle among open beads: a-1, a-2\n"},
+		{"--version", []string{"--version"}, ExitOK, "beadline ", ""},
+		{"-v", []string{"-v"}, ExitOK, "beadline ", ""},
+		{"version -h", []string{"version", "-h"}, ExitOK, "Usage: beadline version", ""},
+		{"version stray", []string{"version", "--json"}, ExitUsage, "", "flag provided but not defined: -json"},
+		{"version extra", []string{"version", "extra"}, ExitUsage, "", `beadline version: unexpected argument "extra"`},
+		{"mistyped command", []string{"chek"}, ExitUsage, "", "chek: not a command, repository or file; did you mean 'beadline check'?"},
+		{"unknown word", []string{"frobnicate"}, ExitUsage, "", "frobnicate: not a command, repository or file\nRun 'beadline help' for usage."},
+		{"missing path", []string{"./nope/x.jsonl"}, ExitUsage, "", "./nope/x.jsonl: no such repository or file"},
+		{"not a repo", []string{"../../testdata"}, ExitUsage, "", "../../testdata has no .beads directory: not a beads repository"},
+		{"unknown flag", []string{"--frobnicate"}, ExitUsage, "", "flag provided but not defined: -frobnicate"},
+		{"no runs", []string{"--runs", "0", "../../testdata/problems/a.jsonl"}, ExitUsage, "", "--runs must be at least 1"},
+		{"bad as-of", []string{"--as-of", "yesterday"}, ExitUsage, "", `--as-of: "yesterday" is not a date`},
+		{"bad agents", []string{"--agents", "api"}, ExitUsage, "", `want REPO=N, got "api"`},
+		{"json and explain", []string{"--json", "--explain", "x"}, ExitUsage, "", "pick one"},
+		{"missing config", []string{"-c", "does-not-exist.toml"}, ExitFailure, "", "beadline: open does-not-exist.toml"},
+		{"doctor clean fixture", []string{"doctor", "--config", multirepo}, ExitOK, "15 issues, 4 high-level, 2 goals, 3 human gates\n", ""},
+		{"doctor problems fixture", []string{"doctor", "-c", "../../testdata/problems/beadline.toml"}, ExitFailure, "1 error, 4 warnings", "error: blocking cycle among open beads: a-1, a-2\n"},
+		{"doctor paths", []string{"doctor", "../../testdata/multirepo/api.jsonl"}, ExitOK, "repo api: 7 issues from ../../testdata/multirepo/api.jsonl", ""},
 		{"doctor missing config", []string{"doctor", "--config", "does-not-exist.toml"}, ExitFailure, "", "beadline doctor: open does-not-exist.toml"},
 		{"doctor bad flag", []string{"doctor", "--frobnicate"}, ExitUsage, "", "flag provided but not defined"},
-		{"doctor extra argument", []string{"doctor", "extra"}, ExitUsage, "", `unexpected argument "extra"`},
-		{"doctor -h", []string{"doctor", "-h"}, ExitOK, "", "-config"},
+		{"doctor missing path", []string{"doctor", "extra"}, ExitUsage, "", "beadline doctor: extra: not a command, repository or file"},
+		{"doctor -h", []string{"doctor", "-h"}, ExitOK, "--config FILE", ""},
+		{"check -h", []string{"check", "-h"}, ExitOK, "--backtest SPAN", ""},
+		{"check --help after a path", []string{"check", "../../testdata/problems/a.jsonl", "--help"}, ExitOK, "--backtest SPAN", ""},
+		{"check bad span", []string{"check", "--backtest", "soon"}, ExitUsage, "", `--backtest: "soon" is not a positive number`},
+		{"check bad flag", []string{"check", "--frobnicate"}, ExitUsage, "", "flag provided but not defined"},
 		{"forecast missing config", []string{"forecast", "--config", "does-not-exist.toml"}, ExitFailure, "", "beadline forecast: open does-not-exist.toml"},
 		{"forecast bad now", []string{"forecast", "--now", "yesterday"}, ExitUsage, "", "-now: parsing time"},
-		{"forecast no runs", []string{"forecast", "--config", "../../testdata/multirepo/beadline.toml", "--runs", "0"}, ExitUsage, "", "-runs must be at least 1"},
+		{"forecast no runs", []string{"forecast", "--config", multirepo, "--runs", "0"}, ExitUsage, "", "-runs must be at least 1"},
 		{"forecast extra argument", []string{"forecast", "extra"}, ExitUsage, "", `unexpected argument "extra"`},
+		{"forecast -h", []string{"forecast", "-h"}, ExitOK, "--write-back", ""},
 		{"render without roadmap.json", []string{"render"}, ExitFailure, "", "beadline render: open roadmap.json"},
 		{"render bad flag", []string{"render", "--frobnicate"}, ExitUsage, "", "flag provided but not defined"},
 		{"render extra argument", []string{"render", "extra"}, ExitUsage, "", `unexpected argument "extra"`},
-		{"render -h", []string{"render", "-h"}, ExitOK, "", "-title"},
-		{"serve stub", []string{"serve"}, ExitFailure, "", "beadline serve: not implemented yet"},
+		{"render -h", []string{"render", "-h"}, ExitOK, "--title TEXT", ""},
+		{"serve is gone", []string{"serve"}, ExitUsage, "", "serve: not a command, repository or file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,8 +92,18 @@ func TestRun(t *testing.T) {
 func TestUsageListsEveryCommand(t *testing.T) {
 	_, stdout, _ := run("help")
 	for _, c := range commands() {
-		if !strings.Contains(stdout, "  "+c.name+" ") {
-			t.Errorf("usage does not list %q:\n%s", c.name, stdout)
+		listed := strings.Contains(stdout, "  beadline "+c.name+" ")
+		if listed == c.hidden {
+			t.Errorf("command %q: listed %v, hidden %v:\n%s", c.name, listed, c.hidden, stdout)
+		}
+		// Every command, hidden or not, has help that -h prints.
+		if code, out, _ := run(c.name, "-h"); code != ExitOK || !strings.HasPrefix(out, "Usage: beadline "+c.name) {
+			t.Errorf("%s -h: exit %d, stdout %q", c.name, code, out)
+		}
+	}
+	for _, gone := range []string{"serve", "almost surely"} {
+		if strings.Contains(stdout, gone) {
+			t.Errorf("usage mentions %q", gone)
 		}
 	}
 }
@@ -79,13 +113,15 @@ func TestVersion(t *testing.T) {
 	t.Cleanup(func() { Version = saved })
 
 	Version = "v1.2.3"
-	if _, stdout, _ := run("version"); stdout != "beadline v1.2.3\n" {
-		t.Errorf("with linker version: stdout = %q", stdout)
+	for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
+		if _, stdout, _ := run(args...); stdout != "beadline v1.2.3\n" {
+			t.Errorf("%v with linker version: stdout = %q", args, stdout)
+		}
 	}
 
 	Version = ""
 	if got := version(); got == "" {
-		t.Error("version() is empty without a linker version; want a module version or \"dev\"")
+		t.Error("version() is empty without a linker version; want a module version, a revision or \"dev\"")
 	}
 }
 

@@ -2,8 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,22 +11,29 @@ import (
 	"github.com/alexknips/beadline/internal/roadmap"
 )
 
+const renderHelp = `Usage: beadline render [flags]
+
+Hidden: 'beadline' writes the page itself. This renders an existing
+roadmap.json as the single-file HTML page.
+
+Flags:
+  --in FILE      roadmap.json to render (default roadmap.json)
+  --out FILE     HTML file to write, or "-" for stdout (default roadmap.html)
+  --title TEXT   page title (default Roadmap)
+  -h, --help     show this help
+`
+
 // runRender reads roadmap.json and writes the single-file HTML page.
 func runRender(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("render", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet()
 	in := fs.String("in", "roadmap.json", "roadmap.json to render")
 	out := fs.String("out", "roadmap.html", `HTML file to write, or "-" for stdout`)
 	title := fs.String("title", "Roadmap", "page title")
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return ExitOK
-		}
-		return ExitUsage
+		return flagError(stdout, stderr, "render", renderHelp, err)
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "beadline render: unexpected argument %q\n", fs.Arg(0))
-		return ExitUsage
+		return usageError(stderr, "render", "unexpected argument %q", fs.Arg(0))
 	}
 
 	r, err := roadmap.ReadFile(*in)

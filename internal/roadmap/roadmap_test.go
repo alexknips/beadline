@@ -2,6 +2,8 @@ package roadmap
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -145,7 +147,7 @@ func issueGraph(t *testing.T, issues []*graph.Issue, edges [][3]string) *graph.G
 }
 
 func TestBuildStatus(t *testing.T) {
-	cfg, err := config.Parse("[[repos]]\nname = \"r\"\nexport = \"r.jsonl\"\n")
+	cfg, err := config.Parse(`repos = ["r.jsonl"]`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +340,7 @@ func TestFingerprint(t *testing.T) {
 	}
 	write("a.jsonl", "{\"id\":\"a-1\"}\n")
 	write("b.jsonl", "{\"id\":\"b-1\"}\n")
-	write("beadline.toml", "[[repos]]\nname = \"a\"\nexport = \"a.jsonl\"\n[[repos]]\nname = \"b\"\nexport = \"b.jsonl\"\n")
+	write("beadline.toml", `repos = ["a.jsonl", "b.jsonl"]`)
 	cfg, err := config.Load(filepath.Join(dir, "beadline.toml"))
 	if err != nil {
 		t.Fatal(err)
@@ -362,5 +364,52 @@ func TestFingerprint(t *testing.T) {
 	os.Remove(filepath.Join(dir, "a.jsonl"))
 	if _, err := Fingerprint(cfg); err == nil || !strings.Contains(err.Error(), "repo a") {
 		t.Errorf("missing export: err = %v", err)
+	}
+}
+
+func TestSetInputs(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "multirepo", "beadline.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exports := load.ReadAll(context.Background(), cfg, nil)
+	g, rep, err := load.FromExports(&cfg.Conventions, exports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Build(g, rep, cfg, now)
+	r.SetInputs(exports)
+	files, err := Fingerprint(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(r.Inputs, files) {
+		t.Errorf("inputs of what was read = %+v, want the files' %+v", r.Inputs, files)
+	}
+
+	exports[1].Err, exports[1].Data = errors.New("repo web: database is locked"), nil
+	r.SetInputs(exports)
+	if len(r.Inputs.Exports) != 2 || r.Inputs.Fingerprint == files.Fingerprint ||
+		r.Repos[1].Error != "repo web: database is locked" || r.Repos[0].Error != "" {
+		t.Errorf("with a failed repo: inputs %+v, repos %+v", r.Inputs, r.Repos)
+	}
+}
+
+func TestHide(t *testing.T) {
+	cfg, g, rep := fixture(t, "multirepo")
+	r := Build(g, rep, cfg, now)
+	r.Hide([]string{"api-m1", "hq-g1", "not-there"})
+	for _, m := range r.Milestones {
+		if m.ID == "api-m1" {
+			t.Error("api-m1 is still on the roadmap")
+		}
+	}
+	for _, g := range r.Goals {
+		if g.ID == "hq-g1" {
+			t.Error("hq-g1 is still on the roadmap")
+		}
+	}
+	if len(r.Milestones) == 0 || len(r.Goals) == 0 {
+		t.Errorf("Hide removed too much: %d milestones, %d goals", len(r.Milestones), len(r.Goals))
 	}
 }

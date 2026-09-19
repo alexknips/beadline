@@ -3,11 +3,11 @@ package load
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/alexknips/beadline/internal/config"
@@ -108,7 +108,7 @@ func (d dependency) created() (time.Time, bool) {
 	return t.UTC(), err == nil
 }
 
-// Load reads every repository export named in cfg, in config order.
+// Load reads every repository in cfg, in config order, as ParseFiles does.
 func Load(cfg *config.Config) (*graph.Graph, *Report, error) {
 	ex, err := ParseFiles(cfg)
 	if err != nil {
@@ -117,19 +117,16 @@ func Load(cfg *config.Config) (*graph.Graph, *Report, error) {
 	return ex.Graph(&cfg.Conventions, time.Time{})
 }
 
-// ParseFiles parses every repository export named in cfg, in config order.
+// ParseFiles reads and parses every repository in cfg, in config order, as
+// ReadAll does with bd from PATH, and fails if any cannot be read.
 func ParseFiles(cfg *config.Config) (*Exports, error) {
-	var sources []Source
-	for _, r := range cfg.Repos {
-		path := r.ExportPath(cfg)
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, fmt.Errorf("repo %s: %w", r.Name, err)
+	exports := ReadAll(context.Background(), cfg, BdExporter("bd"))
+	for _, e := range exports {
+		if e.Err != nil {
+			return nil, e.Err
 		}
-		defer f.Close()
-		sources = append(sources, Source{Repo: r.Name, Name: path, R: f})
 	}
-	return Parse(sources...)
+	return ParseExports(exports)
 }
 
 // Read builds one graph from the sources and applies the conventions:

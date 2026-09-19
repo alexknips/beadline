@@ -189,6 +189,9 @@ func layout(r *roadmap.Roadmap, v *view) timeline {
 			l.Rows = append(l.Rows, mkRow(m.ID, m.Title, reposAttr(m.Repo), &m.Outlook, v.milestoneTip(m)))
 		}
 		l.Note = laneNote(open, done, r.Config.Model.WindowDays, rp.Concurrency)
+		if rp.Error != "" {
+			l.Note, l.Empty = "could not be read", "could not be read: see the note at the top"
+		}
 		addLane(l)
 	}
 	t.H = y - laneGap + 12

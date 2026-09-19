@@ -24,7 +24,10 @@
 </header>
 <main>
 {{- if .NoForecast}}
-<p class="banner">No forecast in this roadmap yet: it shows status and progress from the graph only. Run <code>beadline forecast</code> to add dates.</p>
+<p class="banner">No forecast in this roadmap yet: it shows status and progress from the graph only. Run <code>beadline</code> to add dates.</p>
+{{- end}}
+{{- with .Failed}}
+<div class="banner error" role="alert"><p>Some repos could not be read, so this page shows the others only:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>
 {{- end}}
 <p class="summary">{{range .Summary}}<span class="chip {{.Class}}">{{.Text}}</span> {{end}}<span class="calibration">{{.Calibration}}</span></p>
 <section id="timeline" aria-labelledby="timeline-h">
@@ -33,12 +36,12 @@
 {{template "timeline" .Timeline}}
 </div>
 <ul class="legend">
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-on_track" x="0" y="2" width="28" height="8" rx="2"/></svg>on track: P80 by the target</li>
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-at_risk" x="0" y="2" width="28" height="8" rx="2"/></svg>at risk: P50 by the target, P80 after</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-on_track" x="0" y="2" width="28" height="8" rx="2"/></svg>on track: planned by the target (80% chance)</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-at_risk" x="0" y="2" width="28" height="8" rx="2"/></svg>at risk: 50/50 by the target</li>
 <li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-late" x="0" y="2" width="28" height="8" rx="2"/></svg>late</li>
 <li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-none" x="0" y="2" width="28" height="8" rx="2"/></svg>no target</li>
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-none" x="0" y="2" width="28" height="8" rx="2"/><line class="p50" x1="14" x2="14" y1="0" y2="12"/></svg>P50</li>
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><line class="p95" x1="0" x2="28" y1="6" y2="6"/></svg>P80 to P95</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-none" x="0" y="2" width="28" height="8" rx="2"/><line class="p50" x1="14" x2="14" y1="0" y2="12"/></svg>50/50</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><line class="p95" x1="0" x2="28" y1="6" y2="6"/></svg>on to a 95% chance</li>
 <li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><path class="target" d="M14 0l6 6-6 6-6-6z"/></svg>target (due_at)</li>
 </ul>
 </section>
@@ -46,15 +49,15 @@
 <h2 id="table-h">Table</h2>
 <div class="scroll">
 <table>
-<caption>Milestones, epics and goals by lane. Dates are UTC; P50, P80 and P95 are forecast finish dates.</caption>
-<thead><tr><th scope="col">Milestone</th><th scope="col">Status</th><th scope="col">Schedule</th><th scope="col">Left</th><th scope="col">Done</th><th scope="col">P50</th><th scope="col">P80</th><th scope="col">P95</th><th scope="col">Target</th><th scope="col">Agent</th><th scope="col">Human wait</th></tr></thead>
+<caption>Milestones, epics and goals by lane. Dates are UTC. Plan for a date with an 80% chance of being done by then; 50/50 is an even chance.</caption>
+<thead><tr><th scope="col">Milestone</th><th scope="col">Status</th><th scope="col">Schedule</th><th scope="col">Left</th><th scope="col">Done</th><th scope="col">Plan for (80% chance)</th><th scope="col">50/50</th><th scope="col">Target</th><th scope="col">Agent</th><th scope="col">Human wait</th></tr></thead>
 {{- range .Groups}}
 <tbody data-repo="{{.Repo}}">
-<tr class="group"><th colspan="11" scope="rowgroup">{{.Name}}</th></tr>
+<tr class="group"><th colspan="10" scope="rowgroup">{{.Name}}</th></tr>
 {{- range .Rows}}
-<tr data-id="{{.ID}}" data-repos="{{.Repos}}"><th scope="row">{{if ne .Title .ID}}<span class="t">{{.Title}}</span> {{end}}<span class="id">{{.ID}} · {{.Kind}}</span></th><td><span class="st {{.StatusClass}}">{{.Status}}</span></td><td>{{if .ScheduleClass}}<span class="chip {{.ScheduleClass}}">{{.Schedule}}</span>{{else}}<span class="empty">{{.Schedule}}</span>{{end}}</td><td class="n">{{.Left}}</td><td class="n">{{.Done}}</td><td class="d">{{.P50}}</td><td class="d">{{.P80}}</td><td class="d">{{.P95}}</td><td class="d">{{.Target}}</td><td class="n">{{.Agent}}</td><td class="n">{{.Human}}</td></tr>
+<tr data-id="{{.ID}}" data-repos="{{.Repos}}"><th scope="row">{{if ne .Title .ID}}<span class="t">{{.Title}}</span> {{end}}<span class="id">{{.ID}} · {{.Kind}}</span></th><td><span class="st {{.StatusClass}}">{{.Status}}</span></td><td>{{if .ScheduleClass}}<span class="chip {{.ScheduleClass}}">{{.Schedule}}</span>{{else}}<span class="empty">{{.Schedule}}</span>{{end}}</td><td class="n">{{.Left}}</td><td class="n">{{.Done}}</td><td class="d">{{.P80}}</td><td class="d">{{.P50}}</td><td class="d">{{.Target}}</td><td class="n">{{.Agent}}</td><td class="n">{{.Human}}</td></tr>
 {{- else}}
-<tr><td colspan="11" class="empty">{{.Empty}}</td></tr>
+<tr><td colspan="10" class="empty">{{.Empty}}</td></tr>
 {{- end}}
 </tbody>
 {{- end}}
@@ -63,7 +66,8 @@
 </section>
 </main>
 <footer>
-<p>Bars run from now to the P80 forecast; the tick marks P50 and the whisker runs on to P95. Only milestones, epics and goals are shown; the work beneath them is in the numbers. Generated by beadline {{.Version}}.</p>
+<p>Bars run from now to the plan date, which has an 80% chance of holding; the tick marks the 50/50 date and the whisker runs on to a 95% chance. Only milestones, epics and goals are shown; the work beneath them is in the numbers. Generated by beadline {{.Version}}.</p>
+<p>{{.Settings}}</p>
 </footer>
 <div id="pop" class="pop" role="tooltip" hidden></div>
 <script type="application/json" id="roadmap-data">{{.Data}}</script>

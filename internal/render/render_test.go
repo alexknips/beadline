@@ -216,11 +216,13 @@ func TestPageContent(t *testing.T) {
 		`<rect class="bar s-on_track"`, `<rect class="bar s-at_risk"`, `<rect class="bar s-late"`, `<rect class="bar s-none"`,
 		`class="target past"`, // hq-m9's target has passed
 		`ready to close`, `not planned`, `stalled`, `waits on an unloaded repo`,
-		`P50 2026-09-25 · P80 2026-10-01 · P95 2026-10-14`, `Target 2026-10-15: on track`,
+		`Plan for 2026-10-01 (80% chance) · 50/50: 2026-09-25`, `P50 2026-09-25 · P80 2026-10-01 · P95 2026-10-14`, `Target 2026-10-15: on track`,
 		`Remaining 4 of 6 (33.3% done) · 1 human gate`, `Pace 3.5 beads/day · agents 3`,
 		`Critical chain: 3 beads`, `Waits on unloaded: ops-7`, `Members: Public API v1; Usage dashboard`,
 		`A milestone with a very long title that has…`,
-		`1 on track`, `1 at risk`, `2 late`, `Calibration: P80 held for 75% of 12 scored forecasts (P50 for 50%).`,
+		`1 on track`, `1 at risk`, `2 late`, `Track record: 80% dates held 9 of 12.`,
+		`<th scope="col">Plan for (80% chance)</th><th scope="col">50/50</th>`,
+		`<p>Settings: agents.api = 3 · agents.hq = 1 · human_gate.metadata = [&#34;awaiting_signoff&#34;, &#34;hold_reason&#34;].</p>`,
 		`model adr-1 · seed 1 · 2000 runs · inputs 320d4943330f`,
 		`done 2026-08-20`, // web-e2 in the table, not the timeline
 	} {
@@ -231,8 +233,11 @@ func TestPageContent(t *testing.T) {
 	if strings.Contains(page, `<g class="row" data-id="web-e2"`) {
 		t.Error("a done epic is on the timeline")
 	}
-	if strings.Contains(page, "No forecast in this roadmap yet") {
-		t.Error("forecast roadmap shows the no-forecast banner")
+	if strings.Contains(page, "No forecast in this roadmap yet") || strings.Contains(page, "could not be read") {
+		t.Error("forecast roadmap shows a banner")
+	}
+	if strings.Contains(strings.ToLower(page), "almost surely") {
+		t.Error(`the page says "almost surely"`)
 	}
 
 	plain := renderString(t, built(t))
@@ -243,6 +248,30 @@ func TestPageContent(t *testing.T) {
 	}
 	if strings.Contains(timelineSVG(t, plain), `class="bar`) {
 		t.Error("roadmap without a forecast draws bars")
+	}
+}
+
+func TestFailedRepo(t *testing.T) {
+	r := built(t)
+	// A repo that could not be read has no beads.
+	r.Repos[1].Error = "repo web: bd export: exit status 1: database locked"
+	var kept []roadmap.Milestone
+	for _, m := range r.Milestones {
+		if m.Repo != "web" {
+			kept = append(kept, m)
+		}
+	}
+	r.Milestones = kept
+	r.Config.Settings = nil
+	page := renderString(t, r)
+	for _, want := range []string{
+		`<div class="banner error" role="alert"><p>Some repos could not be read, so this page shows the others only:</p><ul><li>repo web: bd export: exit status 1: database locked</li></ul></div>`,
+		`>could not be read</text>`, `could not be read: see the note at the top`,
+		`<p>Default settings.</p>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
 	}
 }
 

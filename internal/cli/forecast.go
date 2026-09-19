@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -26,12 +25,33 @@ import (
 // newBdRunner runs bd for --write-back; tests replace it.
 var newBdRunner = estimate.BdRunner
 
+const forecastHelp = `Usage: beadline forecast [flags]
+
+Hidden: 'beadline' forecasts and writes the roadmap. This prints the forecast
+of every open high-level bead and goal as a table, or as JSON, from the repos
+of a beadline.toml.
+
+Flags:
+  --config FILE   beadline.toml to read (default beadline.toml)
+  --json          print the forecast as JSON
+  --now TIME      forecast as of this RFC 3339 time instead of now
+  --runs N        simulated schedules (default expert.runs)
+  --seed N        random seed (default expert.seed)
+  --record        also record the forecast as a snapshot for 'beadline check'
+                  (the first run of each day)
+  --snapshots DIR snapshot directory for --record (default .beadline/snapshots
+                  beside beadline.toml)
+  --write-back    write each open work bead's cycle-time P50 and P80 back to
+                  its repository with bd update
+  --bd PATH       bd binary (default bd)
+  -h, --help      show this help
+`
+
 // runForecast loads the configured exports, learns agent and human-gate
 // durations from their history, simulates the remaining graph and prints
 // the forecast of every open high-level bead and goal: a table, or JSON.
 func runForecast(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("forecast", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet()
 	configPath := fs.String("config", "beadline.toml", "path to beadline.toml")
 	asJSON := fs.Bool("json", false, "print the forecast as JSON")
 	nowFlag := fs.String("now", "", "forecast as of this RFC 3339 time instead of the current time")
@@ -42,14 +62,10 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 	record := fs.Bool("record", false, "also record the forecast as a snapshot for 'beadline check' (the first run of each day)")
 	snapshots := fs.String("snapshots", "", "snapshot directory for -record (default: .beadline/snapshots beside beadline.toml)")
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return ExitOK
-		}
-		return ExitUsage
+		return flagError(stdout, stderr, "forecast", forecastHelp, err)
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "beadline forecast: unexpected argument %q\n", fs.Arg(0))
-		return ExitUsage
+		return usageError(stderr, "forecast", "unexpected argument %q", fs.Arg(0))
 	}
 	if *record && *nowFlag != "" {
 		fmt.Fprintf(stderr, "beadline forecast: -record takes no -now: a snapshot must not be dated before the data it was made from\n")

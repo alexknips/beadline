@@ -1,21 +1,6 @@
 # Synthetic three-repo fixture: see ../README.md.
+repos = ["api.jsonl", "web.jsonl", "hq.jsonl"]
 
-[[repos]]
-name = "api"
-export = "api.jsonl"
-concurrency = 3
-
-[[repos]]
-name = "web"
-export = "web.jsonl"
-
-[[repos]]
-name = "hq"
-export = "hq.jsonl"
-concurrency = 1
-
-[conventions]
-high_level_types = ["milestone", "epic"]
-goal_label_pattern = "^goal:(?P<id>.+)$"
-human_gate_title_patterns = ["^HUMAN:"]
-human_gate_metadata_keys = ["awaiting_signoff", "hold_reason"]
+[expert]
+agents = { api = 3, hq = 1 }
+human_gate = { metadata = ["awaiting_signoff", "hold_reason"] }

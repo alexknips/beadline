@@ -80,8 +80,10 @@ type view struct {
 	Title, Version string
 	Facts          []string
 	NoForecast     bool
+	Failed         []string // "repo: why it could not be read"
 	Summary        []chip
 	Calibration    string
+	Settings       string // the non-default settings, for the footer
 	Timeline       timeline
 	Groups         []group
 	Repos          []string
@@ -103,11 +105,11 @@ type group struct {
 }
 
 type tableRow struct {
-	ID, Title, Repos, Kind              string
-	Status, StatusClass                 string
-	Schedule, ScheduleClass             string
-	Left, Done                          string
-	P50, P80, P95, Target, Agent, Human string
+	ID, Title, Repos, Kind         string
+	Status, StatusClass            string
+	Schedule, ScheduleClass        string
+	Left, Done                     string
+	P50, P80, Target, Agent, Human string
 }
 
 func newView(r *roadmap.Roadmap, opts Options) *view {
@@ -122,6 +124,13 @@ func newView(r *roadmap.Roadmap, opts Options) *view {
 	for n := range r.Repos {
 		v.repos[r.Repos[n].Name] = &r.Repos[n]
 		v.Repos = append(v.Repos, r.Repos[n].Name)
+		if e := r.Repos[n].Error; e != "" {
+			v.Failed = append(v.Failed, e)
+		}
+	}
+	v.Settings = "Default settings."
+	if s := r.Config.Settings; len(s) > 0 {
+		v.Settings = "Settings: " + strings.Join(s, " · ") + "."
 	}
 
 	v.Facts = append(v.Facts, "Generated "+r.GeneratedAt.UTC().Format("2006-01-02 15:04")+" UTC",
@@ -143,10 +152,10 @@ func newView(r *roadmap.Roadmap, opts Options) *view {
 	}
 
 	v.summary()
-	v.Calibration = "Calibration: no scored forecasts yet."
+	v.Calibration = "Track record: no graded forecasts yet."
 	if c := r.Calibration; c != nil && c.Samples > 0 {
-		v.Calibration = fmt.Sprintf("Calibration: P80 held for %.0f%% of %s (P50 for %.0f%%).",
-			100*c.P80Coverage, plural(float64(c.Samples), "scored forecast"), 100*c.P50Coverage)
+		v.Calibration = fmt.Sprintf("Track record: 80%% dates held %s of %d.",
+			num(math.Round(c.P80Coverage*float64(c.Samples))), c.Samples)
 	}
 	v.Timeline = layout(r, v)
 	v.table()
@@ -208,7 +217,7 @@ func (v *view) tableRow(id, title, repos, kind string, o *roadmap.Outlook) table
 		Status: v.statusText(o), StatusClass: "st-" + o.Status,
 		Schedule: scheduleText(o.Schedule), ScheduleClass: scheduleClass(o.Schedule),
 		Left: fmt.Sprintf("%d of %d", o.Remaining, o.Total), Done: num(o.DonePct) + "%",
-		P50: date(o.P50), P80: date(o.P80), P95: date(o.P95), Target: date(o.TargetDueAt),
+		P50: date(o.P50), P80: date(o.P80), Target: date(o.TargetDueAt),
 		Agent: hours(o.AgentHours), Human: hours(o.HumanHours)}
 	switch {
 	case o.Schedule != "":
@@ -331,7 +340,8 @@ func (v *view) goalTip(g *roadmap.Goal) []string {
 func (v *view) outlookTip(o *roadmap.Outlook, rate, agents *float64) []string {
 	var tip []string
 	if o.P80 != nil {
-		tip = append(tip, fmt.Sprintf("P50 %s · P80 %s · P95 %s", date(o.P50), date(o.P80), date(o.P95)))
+		tip = append(tip, fmt.Sprintf("Plan for %s (80%% chance) · 50/50: %s", date(o.P80), date(o.P50)),
+			fmt.Sprintf("P50 %s · P80 %s · P95 %s", date(o.P50), date(o.P80), date(o.P95)))
 	}
 	if o.TargetDueAt != nil {
 		tip = append(tip, fmt.Sprintf("Target %s: %s", date(o.TargetDueAt), scheduleText(o.Schedule)))

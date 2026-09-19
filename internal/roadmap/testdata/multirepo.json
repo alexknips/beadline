@@ -51,7 +51,12 @@
       "cycle_minutes_prior": 60,
       "pooling_strength": 10,
       "tail_cap_factor": 3
-    }
+    },
+    "settings": [
+      "agents.api = 3",
+      "agents.hq = 1",
+      "human_gate.metadata = [\"awaiting_signoff\", \"hold_reason\"]"
+    ]
   },
   "inputs": {
     "fingerprint": "sha256:320d4943330fe2ad5938b3bbc4f40284f3f11916386372c7d4814ced50a98638",

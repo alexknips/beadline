@@ -90,7 +90,7 @@ func writeHistory(t *testing.T) string {
 		t.Fatal(err)
 	}
 	cfg := filepath.Join(dir, "beadline.toml")
-	if err := os.WriteFile(cfg, []byte("[[repos]]\nname = \"r\"\nexport = \"r.jsonl\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(`repos = ["r.jsonl"]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return cfg
@@ -132,7 +132,7 @@ func TestCheckUsage(t *testing.T) {
 		{[]string{"check", "--backtest", "soon"}, `-backtest: "soon" is not a positive number`},
 		{[]string{"check", "--backtest", "60d", "--step", "0d"}, `-step: "0d" is not a positive number`},
 		{[]string{"check", "--config", multirepo, "--runs", "0"}, "-runs must be at least 1"},
-		{[]string{"check", "extra"}, `unexpected argument "extra"`},
+		{[]string{"check", "extra"}, "extra: not a command, repository or file"},
 		{[]string{"check", "--frobnicate"}, "flag provided but not defined"},
 		{[]string{"forecast", "--config", multirepo, "--record", "--now", "2026-09-03T12:00:00Z"}, "-record takes no -now"},
 	} {
@@ -140,8 +140,8 @@ func TestCheckUsage(t *testing.T) {
 			t.Errorf("%v: code %d, stderr %q, want usage error with %q", tt.args, code, stderr, tt.want)
 		}
 	}
-	if code, _, stderr := run("check", "-h"); code != ExitOK || !strings.Contains(stderr, "-backtest") {
-		t.Errorf("check -h: code %d, stderr %q", code, stderr)
+	if code, stdout, _ := run("check", "-h"); code != ExitOK || !strings.Contains(stdout, "--backtest") {
+		t.Errorf("check -h: code %d, stdout %q", code, stdout)
 	}
 	if code, _, stderr := run("check", "--config", multirepo, "--backtest", "3d"); code != ExitFailure || !strings.Contains(stderr, "no backtest origin") {
 		t.Errorf("span inside the last week: code %d, stderr %q", code, stderr)

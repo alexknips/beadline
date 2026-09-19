@@ -80,7 +80,7 @@ func TestForecastWriteBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(tmp, "beadline.toml")
-	if err := os.WriteFile(cfgPath, []byte("[[repos]]\nname = \"api\"\nexport = \"api/.beads/issues.jsonl\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`repos = ["api/.beads/issues.jsonl"]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

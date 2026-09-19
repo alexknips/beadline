@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;sha256-b9ddv14zW73IJ5m8SWN4DxW&#43;iIKiQG9lKTvhlcbxSLc=&#39;; script-src &#39;sha256-VPeP/gpocrW&#43;tTkn&#43;lGJ1gCR72vLU52dRfEwXe/wsug=&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">
+<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;sha256-VAxH0ZPeMqMEKdd42zqnZ3CWBYZluvKSzQbfxLJBW7U=&#39;; script-src &#39;sha256-VPeP/gpocrW&#43;tTkn&#43;lGJ1gCR72vLU52dRfEwXe/wsug=&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">
 <meta name="generator" content="beadline test">
 <title>Fixture roadmap</title>
 <style>:root {
@@ -50,6 +50,8 @@ button, select {
 button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .banner { border: 1px solid var(--line); border-left: 4px solid var(--none); border-radius: 6px; padding: 8px 12px; background: var(--lane); }
+.banner.error { border-left-color: var(--late); }
+.banner p, .banner ul { margin: 0; }
 .summary { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .chip::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--none); }
@@ -130,8 +132,8 @@ footer { margin-top: 24px; font-size: 12px; }
 </div>
 </header>
 <main>
-<p class="banner">No forecast in this roadmap yet: it shows status and progress from the graph only. Run <code>beadline forecast</code> to add dates.</p>
-<p class="summary"><span class="chip s-on_track">0 on track</span> <span class="chip s-at_risk">0 at risk</span> <span class="chip s-late">0 late</span> <span class="chip s-none">4 without a target or forecast</span> <span class="calibration">Calibration: no scored forecasts yet.</span></p>
+<p class="banner">No forecast in this roadmap yet: it shows status and progress from the graph only. Run <code>beadline</code> to add dates.</p>
+<p class="summary"><span class="chip s-on_track">0 on track</span> <span class="chip s-at_risk">0 at risk</span> <span class="chip s-late">0 late</span> <span class="chip s-none">4 without a target or forecast</span> <span class="calibration">Track record: no graded forecasts yet.</span></p>
 <section id="timeline" aria-labelledby="timeline-h">
 <h2 id="timeline-h">Timeline</h2>
 <div class="scroll">
@@ -190,12 +192,12 @@ Pace — · agents —</title>
 </svg>
 </div>
 <ul class="legend">
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-on_track" x="0" y="2" width="28" height="8" rx="2"/></svg>on track: P80 by the target</li>
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-at_risk" x="0" y="2" width="28" height="8" rx="2"/></svg>at risk: P50 by the target, P80 after</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-on_track" x="0" y="2" width="28" height="8" rx="2"/></svg>on track: planned by the target (80% chance)</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-at_risk" x="0" y="2" width="28" height="8" rx="2"/></svg>at risk: 50/50 by the target</li>
 <li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-late" x="0" y="2" width="28" height="8" rx="2"/></svg>late</li>
 <li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-none" x="0" y="2" width="28" height="8" rx="2"/></svg>no target</li>
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-none" x="0" y="2" width="28" height="8" rx="2"/><line class="p50" x1="14" x2="14" y1="0" y2="12"/></svg>P50</li>
-<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><line class="p95" x1="0" x2="28" y1="6" y2="6"/></svg>P80 to P95</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><rect class="bar s-none" x="0" y="2" width="28" height="8" rx="2"/><line class="p50" x1="14" x2="14" y1="0" y2="12"/></svg>50/50</li>
+<li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><line class="p95" x1="0" x2="28" y1="6" y2="6"/></svg>on to a 95% chance</li>
 <li><svg viewBox="0 0 28 12" width="28" height="12" aria-hidden="true"><path class="target" d="M14 0l6 6-6 6-6-6z"/></svg>target (due_at)</li>
 </ul>
 </section>
@@ -203,36 +205,37 @@ Pace — · agents —</title>
 <h2 id="table-h">Table</h2>
 <div class="scroll">
 <table>
-<caption>Milestones, epics and goals by lane. Dates are UTC; P50, P80 and P95 are forecast finish dates.</caption>
-<thead><tr><th scope="col">Milestone</th><th scope="col">Status</th><th scope="col">Schedule</th><th scope="col">Left</th><th scope="col">Done</th><th scope="col">P50</th><th scope="col">P80</th><th scope="col">P95</th><th scope="col">Target</th><th scope="col">Agent</th><th scope="col">Human wait</th></tr></thead>
+<caption>Milestones, epics and goals by lane. Dates are UTC. Plan for a date with an 80% chance of being done by then; 50/50 is an even chance.</caption>
+<thead><tr><th scope="col">Milestone</th><th scope="col">Status</th><th scope="col">Schedule</th><th scope="col">Left</th><th scope="col">Done</th><th scope="col">Plan for (80% chance)</th><th scope="col">50/50</th><th scope="col">Target</th><th scope="col">Agent</th><th scope="col">Human wait</th></tr></thead>
 <tbody data-repo="*goals">
-<tr class="group"><th colspan="11" scope="rowgroup">Goals</th></tr>
-<tr data-id="hq-g1" data-repos="[&#34;api&#34;,&#34;hq&#34;,&#34;web&#34;]"><th scope="row"><span class="t">Public launch</span> <span class="id">hq-g1 · goal</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">10 of 12</td><td class="n">16.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
-<tr data-id="hq-g2" data-repos="[&#34;web&#34;]"><th scope="row"><span class="id">hq-g2 · goal</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 2</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr class="group"><th colspan="10" scope="rowgroup">Goals</th></tr>
+<tr data-id="hq-g1" data-repos="[&#34;api&#34;,&#34;hq&#34;,&#34;web&#34;]"><th scope="row"><span class="t">Public launch</span> <span class="id">hq-g1 · goal</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">10 of 12</td><td class="n">16.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="hq-g2" data-repos="[&#34;web&#34;]"><th scope="row"><span class="id">hq-g2 · goal</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 2</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
 </tbody>
 <tbody data-repo="api">
-<tr class="group"><th colspan="11" scope="rowgroup">api</th></tr>
-<tr data-id="api-e1" data-repos="[&#34;api&#34;]"><th scope="row"><span class="t">Auth</span> <span class="id">api-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">1 of 3</td><td class="n">66.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
-<tr data-id="api-m1" data-repos="[&#34;api&#34;]"><th scope="row"><span class="t">Public API v1</span> <span class="id">api-m1 · milestone</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">—</span></td><td class="n">4 of 6</td><td class="n">33.3%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">2026-10-15</td><td class="n">—</td><td class="n">—</td></tr>
+<tr class="group"><th colspan="10" scope="rowgroup">api</th></tr>
+<tr data-id="api-e1" data-repos="[&#34;api&#34;]"><th scope="row"><span class="t">Auth</span> <span class="id">api-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">1 of 3</td><td class="n">66.7%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="api-m1" data-repos="[&#34;api&#34;]"><th scope="row"><span class="t">Public API v1</span> <span class="id">api-m1 · milestone</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">—</span></td><td class="n">4 of 6</td><td class="n">33.3%</td><td class="d">—</td><td class="d">—</td><td class="d">2026-10-15</td><td class="n">—</td><td class="n">—</td></tr>
 </tbody>
 <tbody data-repo="web">
-<tr class="group"><th colspan="11" scope="rowgroup">web</th></tr>
-<tr data-id="web-e1" data-repos="[&#34;web&#34;]"><th scope="row"><span class="t">Usage dashboard</span> <span class="id">web-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">6 of 6</td><td class="n">0%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
-<tr data-id="web-e2" data-repos="[&#34;web&#34;]"><th scope="row"><span class="t">Onboarding</span> <span class="id">web-e2 · epic</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 1</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr class="group"><th colspan="10" scope="rowgroup">web</th></tr>
+<tr data-id="web-e1" data-repos="[&#34;web&#34;]"><th scope="row"><span class="t">Usage dashboard</span> <span class="id">web-e1 · epic</span></th><td><span class="st st-forecast">no forecast yet</span></td><td><span class="empty">no target</span></td><td class="n">6 of 6</td><td class="n">0%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
+<tr data-id="web-e2" data-repos="[&#34;web&#34;]"><th scope="row"><span class="t">Onboarding</span> <span class="id">web-e2 · epic</span></th><td><span class="st st-done">done 2026-08-20</span></td><td><span class="empty">no target</span></td><td class="n">0 of 1</td><td class="n">100%</td><td class="d">—</td><td class="d">—</td><td class="d">—</td><td class="n">—</td><td class="n">—</td></tr>
 </tbody>
 <tbody data-repo="hq">
-<tr class="group"><th colspan="11" scope="rowgroup">hq</th></tr>
-<tr><td colspan="11" class="empty">No open or recently closed milestones or epics.</td></tr>
+<tr class="group"><th colspan="10" scope="rowgroup">hq</th></tr>
+<tr><td colspan="10" class="empty">No open or recently closed milestones or epics.</td></tr>
 </tbody>
 </table>
 </div>
 </section>
 </main>
 <footer>
-<p>Bars run from now to the P80 forecast; the tick marks P50 and the whisker runs on to P95. Only milestones, epics and goals are shown; the work beneath them is in the numbers. Generated by beadline test.</p>
+<p>Bars run from now to the plan date, which has an 80% chance of holding; the tick marks the 50/50 date and the whisker runs on to a 95% chance. Only milestones, epics and goals are shown; the work beneath them is in the numbers. Generated by beadline test.</p>
+<p>Settings: agents.api = 3 · agents.hq = 1 · human_gate.metadata = [&#34;awaiting_signoff&#34;, &#34;hold_reason&#34;].</p>
 </footer>
 <div id="pop" class="pop" role="tooltip" hidden></div>
-<script type="application/json" id="roadmap-data">{"schema_version":1,"generated_at":"2026-09-19T12:00:00Z","beadline_version":"test","config":{"repos":[{"name":"api","export":"api.jsonl","concurrency":3},{"name":"web","export":"web.jsonl","concurrency":"measure"},{"name":"hq","export":"hq.jsonl","concurrency":1}],"conventions":{"high_level_types":["milestone","epic"],"goal_label_pattern":"^goal:(?P\u003cid\u003e.+)$","human_gate_title_patterns":["^HUMAN:"],"human_gate_metadata_keys":["awaiting_signoff","hold_reason"],"infra_types":["molecule","wisp","step","convoy","message","gate","event"]},"model":{"window_days":45,"simulations":2000,"seed":1,"human_gate_hours_prior":24,"cycle_minutes_prior":60,"pooling_strength":10,"tail_cap_factor":3}},"inputs":{"fingerprint":"sha256:320d4943330fe2ad5938b3bbc4f40284f3f11916386372c7d4814ced50a98638","exports":[{"repo":"api","path":"api.jsonl","sha256":"50c1a68b74ce7bb5ee0f1f9d68a65f7ab050b9139e0961a83b25425fbc2f268a","bytes":5605},{"repo":"web","path":"web.jsonl","sha256":"8f54f6d8c7e3c57859f7f5cfc0943749d0465d06062a74a7d4f33d7771dd93af","bytes":3184},{"repo":"hq","path":"hq.jsonl","sha256":"673dc67a7256299ae055049583a75a713714c2b95f07d9098b9a65a596a00d6f","bytes":1379}]},"repos":[{"name":"api","issues":7,"open":5,"closed":2,"concurrency":3,"concurrency_source":"configured"},{"name":"web","issues":6,"open":4,"closed":2,"concurrency_source":"measured"},{"name":"hq","issues":2,"open":2,"closed":0,"concurrency":1,"concurrency_source":"configured"}],"goals":[{"id":"hq-g1","title":"Public launch","repo":"hq","members":["api-m1","web-e1"],"status":"forecast","total":12,"done":2,"remaining":10,"done_pct":16.7,"remaining_ids":["api-3","api-4","api-5","api-e1","api-m1","hq-h1","web-1","web-2","web-3","web-e1"],"human_gates":3},{"id":"hq-g2","title":"hq-g2","members":["web-e2"],"status":"done","closed_at":"2026-08-20T17:00:00Z","total":2,"done":2,"remaining":0,"done_pct":100,"remaining_ids":[],"human_gates":0}],"milestones":[{"id":"api-m1","title":"Public API v1","repo":"api","type":"milestone","goals":["hq-g1"],"status":"forecast","target_due_at":"2026-10-15T00:00:00Z","total":6,"done":2,"remaining":4,"done_pct":33.3,"remaining_ids":["api-3","api-4","api-5","api-e1"],"human_gates":1},{"id":"api-e1","title":"Auth","repo":"api","type":"epic","status":"forecast","total":3,"done":2,"remaining":1,"done_pct":66.7,"remaining_ids":["api-3"],"human_gates":0},{"id":"web-e1","title":"Usage dashboard","repo":"web","type":"epic","goals":["hq-g1"],"status":"forecast","total":6,"done":0,"remaining":6,"done_pct":0,"remaining_ids":["api-3","api-4","hq-h1","web-1","web-2","web-3"],"human_gates":2},{"id":"web-e2","title":"Onboarding","repo":"web","type":"epic","goals":["hq-g2"],"status":"done","closed_at":"2026-08-20T17:00:00Z","total":1,"done":1,"remaining":0,"done_pct":100,"remaining_ids":[],"human_gates":0}]}</script>
+<script type="application/json" id="roadmap-data">{"schema_version":1,"generated_at":"2026-09-19T12:00:00Z","beadline_version":"test","config":{"repos":[{"name":"api","export":"api.jsonl","concurrency":3},{"name":"web","export":"web.jsonl","concurrency":"measure"},{"name":"hq","export":"hq.jsonl","concurrency":1}],"conventions":{"high_level_types":["milestone","epic"],"goal_label_pattern":"^goal:(?P\u003cid\u003e.+)$","human_gate_title_patterns":["^HUMAN:"],"human_gate_metadata_keys":["awaiting_signoff","hold_reason"],"infra_types":["molecule","wisp","step","convoy","message","gate","event"]},"model":{"window_days":45,"simulations":2000,"seed":1,"human_gate_hours_prior":24,"cycle_minutes_prior":60,"pooling_strength":10,"tail_cap_factor":3},"settings":["agents.api = 3","agents.hq = 1","human_gate.metadata = [\"awaiting_signoff\", \"hold_reason\"]"]},"inputs":{"fingerprint":"sha256:320d4943330fe2ad5938b3bbc4f40284f3f11916386372c7d4814ced50a98638","exports":[{"repo":"api","path":"api.jsonl","sha256":"50c1a68b74ce7bb5ee0f1f9d68a65f7ab050b9139e0961a83b25425fbc2f268a","bytes":5605},{"repo":"web","path":"web.jsonl","sha256":"8f54f6d8c7e3c57859f7f5cfc0943749d0465d06062a74a7d4f33d7771dd93af","bytes":3184},{"repo":"hq","path":"hq.jsonl","sha256":"673dc67a7256299ae055049583a75a713714c2b95f07d9098b9a65a596a00d6f","bytes":1379}]},"repos":[{"name":"api","issues":7,"open":5,"closed":2,"concurrency":3,"concurrency_source":"configured"},{"name":"web","issues":6,"open":4,"closed":2,"concurrency_source":"measured"},{"name":"hq","issues":2,"open":2,"closed":0,"concurrency":1,"concurrency_source":"configured"}],"goals":[{"id":"hq-g1","title":"Public launch","repo":"hq","members":["api-m1","web-e1"],"status":"forecast","total":12,"done":2,"remaining":10,"done_pct":16.7,"remaining_ids":["api-3","api-4","api-5","api-e1","api-m1","hq-h1","web-1","web-2","web-3","web-e1"],"human_gates":3},{"id":"hq-g2","title":"hq-g2","members":["web-e2"],"status":"done","closed_at":"2026-08-20T17:00:00Z","total":2,"done":2,"remaining":0,"done_pct":100,"remaining_ids":[],"human_gates":0}],"milestones":[{"id":"api-m1","title":"Public API v1","repo":"api","type":"milestone","goals":["hq-g1"],"status":"forecast","target_due_at":"2026-10-15T00:00:00Z","total":6,"done":2,"remaining":4,"done_pct":33.3,"remaining_ids":["api-3","api-4","api-5","api-e1"],"human_gates":1},{"id":"api-e1","title":"Auth","repo":"api","type":"epic","status":"forecast","total":3,"done":2,"remaining":1,"done_pct":66.7,"remaining_ids":["api-3"],"human_gates":0},{"id":"web-e1","title":"Usage dashboard","repo":"web","type":"epic","goals":["hq-g1"],"status":"forecast","total":6,"done":0,"remaining":6,"done_pct":0,"remaining_ids":["api-3","api-4","hq-h1","web-1","web-2","web-3"],"human_gates":2},{"id":"web-e2","title":"Onboarding","repo":"web","type":"epic","goals":["hq-g2"],"status":"done","closed_at":"2026-08-20T17:00:00Z","total":1,"done":1,"remaining":0,"done_pct":100,"remaining_ids":[],"human_gates":0}]}</script>
 <script>// beadline roadmap: optional enhancements. The page is complete without them.
 (() => {
   'use strict';

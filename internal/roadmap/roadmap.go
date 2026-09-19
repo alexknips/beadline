@@ -60,14 +60,21 @@ type Roadmap struct {
 	Calibration  *Calibration `json:"calibration,omitempty"`
 }
 
-// Config echoes beadline.toml as the run used it, defaults filled in.
+// Config echoes the configuration as the run used it, defaults filled in.
 type Config struct {
 	Repos       []ConfigRepo `json:"repos"`
 	Conventions Conventions  `json:"conventions"`
 	Model       Model        `json:"model"`
+	// Hide lists the high-level beads and goals left off the roadmap.
+	Hide []string `json:"hide,omitempty"`
+	// Settings are the settings that differ from the defaults, in
+	// beadline.toml syntax without the "expert." prefix. The page footer
+	// lists them.
+	Settings []string `json:"settings,omitempty"`
 }
 
-// ConfigRepo is one [[repos]] entry. Export is the path as configured.
+// ConfigRepo is one repository. Export is the path as configured: a
+// directory read live with bd, or a bd export file.
 type ConfigRepo struct {
 	Name        string      `json:"name"`
 	Export      string      `json:"export"`
@@ -131,11 +138,12 @@ type Inputs struct {
 	Exports     []Export `json:"exports"`
 }
 
-// Export is one repository export file as read.
+// Export is one repository export as read.
 type Export struct {
 	Repo   string `json:"repo"`
-	Path   string `json:"path"`   // as configured
-	SHA256 string `json:"sha256"` // hex
+	Path   string `json:"path"`           // as configured
+	Live   bool   `json:"live,omitempty"` // read with bd export from a repository directory
+	SHA256 string `json:"sha256"`         // hex
 	Bytes  int64  `json:"bytes"`
 }
 
@@ -153,6 +161,9 @@ type Repo struct {
 	// RatePerDay is the pace the forecaster measured: work beads closed per
 	// day over the model window.
 	RatePerDay *float64 `json:"rate_per_day,omitempty"`
+	// Error says why the repo could not be read. The roadmap then shows the
+	// other repos, and this one has no beads.
+	Error string `json:"error,omitempty"`
 }
 
 // Milestone is one high-level bead on the roadmap. Low-level beads are never

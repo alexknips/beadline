@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,60 +17,80 @@ import (
 	"github.com/alexknips/beadline/internal/load"
 )
 
+const checkHelp = `Usage: beadline check [PATH...] [flags]
+
+Grade past forecasts: every snapshot that 'beadline' recorded is scored
+against what has closed since. With --backtest, replay history instead: fit
+only on the data before each origin, forecast, and score what happened. PATH
+works as for 'beadline'.
+
+Flags:
+      --backtest SPAN   replay this span of history, e.g. 60d, 8w or 36h
+      --json            print the report as JSON, with every graded forecast
+  -c, --config FILE     settings and repos (default ./beadline.toml, if present)
+  -h, --help            show this help
+
+Expert flags:
+      --step SPAN       time between backtest origins (default 3.5d)
+      --runs N          simulated schedules per backtest forecast
+                        (default expert.runs, 2000)
+      --snapshots DIR   snapshot directory (default .beadline/snapshots beside
+                        beadline.toml, else in the current directory)
+      --bd PATH         bd binary that reads repository directories (default bd)
+
+Exit status: 0 ok; 1 failure, including a repo that could not be read; 2
+usage error.
+`
+
 // runCheck grades past forecasts against what closed since: the snapshots
-// that forecast -record wrote, or, with -backtest, forecasts replayed from
+// that 'beadline' recorded, or, with --backtest, forecasts replayed from
 // the history in the exports.
 func runCheck(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("check", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	configPath := fs.String("config", "beadline.toml", "path to beadline.toml")
-	snapshots := fs.String("snapshots", "", "snapshot directory (default: .beadline/snapshots beside beadline.toml)")
-	backtest := fs.String("backtest", "", "replay history instead: forecast every -step over this span before the data horizon, e.g. 60d")
-	step := fs.String("step", "3.5d", "time between backtest origins")
-	runs := fs.Int("runs", 0, "simulated schedules per backtest forecast (default: model.simulations)")
-	asJSON := fs.Bool("json", false, "print the report as JSON, with every graded forecast")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return ExitOK
-		}
-		return ExitUsage
-	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "beadline check: unexpected argument %q\n", fs.Arg(0))
-		return ExitUsage
-	}
-	usage := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "beadline check: "+format+"\n", a...)
-		return ExitUsage
+	fs := newFlagSet()
+	var repos repoFlags
+	repos.register(fs)
+	snapshots := fs.String("snapshots", "", "")
+	backtest := fs.String("backtest", "", "")
+	step := fs.String("step", "3.5d", "")
+	runs := fs.Int("runs", 0, "")
+	asJSON := fs.Bool("json", false, "")
+	paths, err := parseArgs(fs, args)
+	if err != nil {
+		return flagError(stdout, stderr, "check", checkHelp, err)
 	}
 	var span, every time.Duration
 	if *backtest != "" {
-		var err error
 		if span, err = parseSpan(*backtest); err != nil {
-			return usage("-backtest: %v", err)
+			return usageError(stderr, "check", "--backtest: %v", err)
 		}
 		if every, err = parseSpan(*step); err != nil {
-			return usage("-step: %v", err)
+			return usageError(stderr, "check", "--step: %v", err)
 		}
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["runs"] && *runs < 1 {
+		return usageError(stderr, "check", "--runs must be at least 1")
 	}
 	fail := func(err error) int {
 		fmt.Fprintf(stderr, "beadline check: %v\n", err)
 		return ExitFailure
 	}
 
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return fail(err)
+	cfg, code := repos.resolve("check", paths, stderr)
+	if code != ExitOK {
+		return code
 	}
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if set["runs"] {
-		if *runs < 1 {
-			return usage("-runs must be at least 1")
-		}
 		cfg.Model.Simulations = *runs
 	}
-	ex, err := load.ParseFiles(cfg)
+	// Grading needs every repo: a forecast of a repo that is missing would
+	// look descoped.
+	exports, failed := repos.read(cfg, stderr)
+	if failed > 0 {
+		return fail(fmt.Errorf("%s could not be read; nothing graded", plural(failed, "repo")))
+	}
+	ex, err := load.ParseExports(exports)
 	if err != nil {
 		return fail(err)
 	}
@@ -87,7 +106,7 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "warning: skipped %v\n", p)
 		}
 		if len(snaps) == 0 && !*asJSON {
-			fmt.Fprintf(stdout, "no snapshots in %s: 'beadline forecast -record' records one a day\n", dir)
+			fmt.Fprintf(stdout, "no snapshots in %s: every run of 'beadline' records one a day\n", dir)
 			return ExitOK
 		}
 		g, _, err := ex.Graph(&cfg.Conventions, time.Time{})
@@ -137,8 +156,8 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	return ExitOK
 }
 
-// snapshotDir is where snapshots live: the -snapshots flag, or
-// .beadline/snapshots beside beadline.toml.
+// snapshotDir is where snapshots live: the --snapshots flag, or
+// .beadline/snapshots beside beadline.toml, else in the working directory.
 func snapshotDir(cfg *config.Config, flagValue string) string {
 	if flagValue != "" {
 		return flagValue
