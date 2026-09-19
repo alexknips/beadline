@@ -29,7 +29,7 @@ func commands() []command {
 	return []command{
 		{"check", "load the configured exports and report graph problems", runCheck},
 		{"forecast", "simulate the remaining graph and print the forecast", runForecast},
-		{"render", "render roadmap.json as a single-file HTML page", notImplemented("render")},
+		{"render", "render roadmap.json as a single-file HTML page", runRender},
 		{"serve", "preview the rendered roadmap locally", notImplemented("serve")},
 		{"version", "print the beadline version", runVersion},
 		{"help", "show this help", runHelp},

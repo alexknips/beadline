@@ -2,8 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/alexknips/beadline/internal/config"
+	"github.com/alexknips/beadline/internal/load"
+	"github.com/alexknips/beadline/internal/roadmap"
 )
 
 func run(args ...string) (code int, stdout, stderr string) {
@@ -36,7 +43,10 @@ func TestRun(t *testing.T) {
 		{"forecast bad now", []string{"forecast", "--now", "yesterday"}, ExitUsage, "", "-now: parsing time"},
 		{"forecast no runs", []string{"forecast", "--config", "../../testdata/multirepo/beadline.toml", "--runs", "0"}, ExitUsage, "", "-runs must be at least 1"},
 		{"forecast extra argument", []string{"forecast", "extra"}, ExitUsage, "", `unexpected argument "extra"`},
-		{"render stub", []string{"render"}, ExitFailure, "", "beadline render: not implemented yet"},
+		{"render without roadmap.json", []string{"render"}, ExitFailure, "", "beadline render: open roadmap.json"},
+		{"render bad flag", []string{"render", "--frobnicate"}, ExitUsage, "", "flag provided but not defined"},
+		{"render extra argument", []string{"render", "extra"}, ExitUsage, "", `unexpected argument "extra"`},
+		{"render -h", []string{"render", "-h"}, ExitOK, "", "-title"},
 		{"serve stub", []string{"serve"}, ExitFailure, "", "beadline serve: not implemented yet"},
 	}
 	for _, tt := range tests {
@@ -104,5 +114,56 @@ func TestCheckOutput(t *testing.T) {
 	if !strings.Contains(stdout, "repo api: 7 issues from ../../testdata/multirepo/api.jsonl (skipped 1 ephemeral, 1 molecule, 1 template)\n") ||
 		!strings.Contains(stdout, "(skipped 1 convoy, 1 non-issue)\n") {
 		t.Errorf("skipped records not reported:\n%s", stdout)
+	}
+}
+
+func TestRender(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "multirepo", "beadline.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, rep, err := load.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(dir, "roadmap.json")
+	if err := roadmap.WriteFile(in, roadmap.Build(g, rep, cfg, time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC))); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(dir, "site", "roadmap.html")
+	if err := os.Mkdir(filepath.Dir(out), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := run("render", "--in", in, "--out", out, "--title", "Town roadmap")
+	if code != ExitOK || stdout != "" || stderr != "" {
+		t.Fatalf("render: code %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	page, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(page), "<!DOCTYPE html>") || !strings.Contains(string(page), "<title>Town roadmap</title>") {
+		t.Errorf("unexpected page:\n%.300s", page)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(out)); len(entries) != 1 {
+		t.Errorf("render left temporary files: %v", entries)
+	}
+
+	code, stdout, _ = run("render", "--in", in, "--out", "-")
+	if code != ExitOK || stdout != strings.Replace(string(page), "Town roadmap", "Roadmap", 2) {
+		t.Errorf("render --out -: code %d, stdout differs from the file", code)
+	}
+
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte(`{"schema_version": 99}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := run("render", "--in", bad, "--out", out); code != ExitFailure || !strings.Contains(stderr, "newer than this beadline reads") {
+		t.Errorf("render of a newer schema: code %d, stderr %q", code, stderr)
+	}
+	if code, _, stderr := run("render", "--in", in, "--out", filepath.Join(dir, "missing", "x.html")); code != ExitFailure || stderr == "" {
+		t.Errorf("render into a missing directory: code %d, stderr %q", code, stderr)
 	}
 }
