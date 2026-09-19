@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,15 +28,19 @@ func TestRealExports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, rep, err := load.Load(cfg)
+	exports := load.ReadAll(context.Background(), cfg, load.BdExporter("bd"))
+	for _, e := range exports {
+		if e.Err != nil {
+			t.Fatal(e.Err)
+		}
+	}
+	g, rep, err := load.FromExports(&cfg.Conventions, exports)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := roadmap.Build(g, rep, cfg, time.Now())
 	r.BeadlineVersion = "dev"
-	if r.Inputs, err = roadmap.Fingerprint(cfg); err != nil {
-		t.Fatal(err)
-	}
+	r.SetInputs(exports)
 	var js bytes.Buffer
 	if err := roadmap.Write(&js, r); err != nil {
 		t.Fatal(err)

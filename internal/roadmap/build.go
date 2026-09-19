@@ -256,16 +256,13 @@ func Fingerprint(cfg *config.Config) (Inputs, error) {
 	return in, nil
 }
 
-// SetInputs fingerprints the exports a run read, in config order, and marks
-// the repos that could not be read. The fingerprint covers the exports that
-// were read, as Fingerprint does for files.
-func (r *Roadmap) SetInputs(exports []load.Export) {
+// InputsOf fingerprints the exports a run read, in config order, as
+// Fingerprint does for files. Exports that failed are left out.
+func InputsOf(exports []load.Export) Inputs {
 	in := Inputs{Exports: []Export{}}
 	all := sha256.New()
-	failed := map[string]string{}
 	for _, e := range exports {
 		if e.Err != nil {
-			failed[e.Repo] = e.Err.Error()
 			continue
 		}
 		sum := sha256.Sum256(e.Data)
@@ -274,7 +271,19 @@ func (r *Roadmap) SetInputs(exports []load.Export) {
 		fmt.Fprintf(all, "%s\t%s\n", e.Repo, hexSum)
 	}
 	in.Fingerprint = "sha256:" + hex.EncodeToString(all.Sum(nil))
-	r.Inputs = in
+	return in
+}
+
+// SetInputs sets Inputs from the exports a run read (InputsOf) and marks
+// the repos that could not be read.
+func (r *Roadmap) SetInputs(exports []load.Export) {
+	r.Inputs = InputsOf(exports)
+	failed := map[string]string{}
+	for _, e := range exports {
+		if e.Err != nil {
+			failed[e.Repo] = e.Err.Error()
+		}
+	}
 	for n := range r.Repos {
 		r.Repos[n].Error = failed[r.Repos[n].Name]
 	}

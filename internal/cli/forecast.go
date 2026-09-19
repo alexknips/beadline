@@ -58,7 +58,7 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 	runs := fs.Int("runs", 0, "number of simulated schedules (default: model.simulations)")
 	seed := fs.Uint64("seed", 0, "random seed (default: model.seed)")
 	writeBack := fs.Bool("write-back", false, "write each open work bead's cycle-time P50 and P80 back to its repository with bd update")
-	bd := fs.String("bd", "bd", "bd binary used by -write-back")
+	bd := fs.String("bd", "bd", "")
 	record := fs.Bool("record", false, "also record the forecast as a snapshot for 'beadline check' (the first run of each day)")
 	snapshots := fs.String("snapshots", "", "snapshot directory for -record (default: .beadline/snapshots beside beadline.toml)")
 	if err := fs.Parse(args); err != nil {
@@ -101,18 +101,19 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "beadline forecast: -runs must be at least 1\n")
 		return ExitUsage
 	}
-	g, rep, err := load.Load(cfg)
+	// Read each repo once: the snapshot names exactly the data it was made
+	// from.
+	exports := load.ReadAll(context.Background(), cfg, newExporter(*bd))
+	for _, e := range exports {
+		if e.Err != nil {
+			return fail(e.Err)
+		}
+	}
+	g, rep, err := load.FromExports(&cfg.Conventions, exports)
 	if err != nil {
 		return fail(err)
 	}
-	var inputs roadmap.Inputs
-	if *record {
-		// Hash the exports right after loading them: the snapshot names
-		// exactly the data it was made from.
-		if inputs, err = roadmap.Fingerprint(cfg); err != nil {
-			return fail(err)
-		}
-	}
+	inputs := roadmap.InputsOf(exports)
 	in, err := forecastInputs(cfg, g, rep, now)
 	if err != nil {
 		return fail(err)
