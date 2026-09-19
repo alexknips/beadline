@@ -75,8 +75,8 @@ func (s *sim) run(r *rand.Rand) {
 		case n.gate:
 			s.own[k] = duration(n.wait(r))
 		case !n.container:
-			s.queue[k] = duration(n.agent.Queue(r))
-			s.own[k] = duration(n.agent.Work(r))
+			q, w := n.agent.Draw(r)
+			s.queue[k], s.own[k] = duration(q), duration(w)
 		}
 	}
 	for repo := range s.running {

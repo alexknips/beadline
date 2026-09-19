@@ -52,7 +52,9 @@ func (r Repo) ExportPath(c *Config) string {
 }
 
 // Concurrency is the maximum number of agents working a repository at once,
-// or Measure to learn it from history. The zero value means Measure.
+// or Measure to learn it from history. The zero value means Measure. A
+// measured value is shown but sets no limit: measured lead times already
+// hold the wait for a free agent (ADR-2 §1).
 type Concurrency struct {
 	Max int // > 0 when fixed; 0 means measure
 }

@@ -3,9 +3,9 @@ package calibrate
 import (
 	"encoding/json"
 	"path/filepath"
-	"regexp"
 	"time"
 
+	"github.com/alexknips/beadline/internal/estimate"
 	"github.com/alexknips/beadline/internal/graph"
 )
 
@@ -103,7 +103,9 @@ type burst struct {
 }
 
 // BurstCloses is the number of closes in one repo within one minute that
-// marks a bulk close: an administrative cleanup, not deliveries.
+// marks a bulk close: an administrative cleanup, not deliveries. Grading
+// asks for more than learning does (estimate.BulkCloses): leaving a close
+// out of the fit costs one sample, voiding a forecast hides a miss.
 const BurstCloses = 8
 
 // NewReality prepares g for grading as of horizon.
@@ -120,25 +122,19 @@ func NewReality(g *graph.Graph, horizon time.Time) *Reality {
 	return r
 }
 
-// descopedReason matches the start of a close reason that says the bead
-// was not delivered.
-var descopedReason = regexp.MustCompile(`(?i)^\s*(duplicate|dup of|supersed|won'?t (fix|do)|wontfix|obsolete|` +
-	`(not|no longer) needed|not planned|moot|abandon|descop|out of scope|closing stale|bulk[- ]?close)`)
-
 // Descoped reports whether a closed bead was closed without being
 // delivered: its close reason starts by saying so (duplicate, superseded,
-// won't fix, obsolete, not needed, descoped, abandoned ...), its
-// gc.work_outcome metadata is no-op or abandoned, or it closed in a bulk
+// won't fix, obsolete, not needed, descoped, abandoned ...) or its
+// gc.work_outcome metadata is no-op or abandoned, by the rule the
+// estimator learns with (estimate.Undelivered), or it closed in a bulk
 // close of BurstCloses or more beads of its repo in one minute.
 func (r *Reality) Descoped(i *graph.Issue) bool {
-	if descopedReason.MatchString(i.CloseReason) {
-		return true
-	}
+	var outcome string
 	if raw, ok := i.Metadata["gc.work_outcome"]; ok {
-		var outcome string
-		if json.Unmarshal(raw, &outcome) == nil && (outcome == "no-op" || outcome == "abandoned") {
-			return true
-		}
+		_ = json.Unmarshal(raw, &outcome)
+	}
+	if estimate.Undelivered(i.CloseReason, outcome) != "" {
+		return true
 	}
 	return !i.ClosedAt.IsZero() && r.bursts[burst{i.Repo, i.ClosedAt.Truncate(time.Minute)}] >= BurstCloses
 }

@@ -22,7 +22,8 @@ func TestForecastTable(t *testing.T) {
 	}
 	for _, want := range []string{
 		"forecast as of 2026-09-03 12:00 UTC, 300 runs, seed 1\n",
-		"agents: api 3, hq 1, web 1 (measured); human-gate lag from 0 closed gates\n",
+		"agents: api 3, hq 1, web no limit (peak 1); human-gate lag from 0 closed gates\n",
+		"learned from 3 delivered closes (2 with a start) and 1 open bead\n",
 		"ITEM", "CRITICAL CHAIN (P80)",
 		"\napi-m1 ", "\napi-e1 ", "\nweb-e1 ", "\ngoal hq-g1 ",
 		"api-3 > api-4 > api-5",

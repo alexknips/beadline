@@ -127,7 +127,6 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 			if err != nil {
 				return nil, err
 			}
-			in.options.Grid = calibrate.Levels
 			return forecast.Run(g, in.options)
 		}
 		pairs, origins, err := calibrate.Backtest(ex, &cfg.Conventions, fc, calibrate.BacktestOptions{

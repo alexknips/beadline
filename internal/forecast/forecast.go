@@ -15,17 +15,16 @@ import (
 )
 
 // ModelVersion names the revision of the forecasting model: the estimator
-// and this simulation (docs/design.md, ADR-1). Snapshots record it, so
+// and this simulation (docs/design.md, ADR-2). Snapshots record it, so
 // calibration never mixes the track records of two models.
-const ModelVersion = "adr-1"
+const ModelVersion = "adr-2"
 
 // Sampler draws the durations of one open work bead, in minutes.
 // estimate.Sampler satisfies it.
 type Sampler interface {
-	// Queue draws the wait from ready until an agent picks the bead up.
-	Queue(r *rand.Rand) float64
-	// Work draws the cycle time still to go.
-	Work(r *rand.Rand) float64
+	// Draw draws the wait from ready until an agent picks the bead up, and
+	// the work still to go after that. A bead already under way has no wait.
+	Draw(r *rand.Rand) (queue, work float64)
 }
 
 // Draw draws one duration in minutes.

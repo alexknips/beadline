@@ -118,9 +118,6 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	if *record {
-		in.options.Grid = calibrate.Levels
-	}
 	res, err := forecast.Run(g, in.options)
 	if err != nil {
 		return fail(err)
@@ -174,11 +171,14 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 
 // inputs is what a forecast learned before it simulated.
 type inputs struct {
-	options  forecast.Options
-	model    *estimate.Model
-	open     []estimate.Bead // open work beads, for the write-back
-	measured map[string]bool // repositories whose concurrency was measured
-	gates    int             // closed gates the human-gate lag was learned from
+	options forecast.Options
+	model   *estimate.Model
+	open    []estimate.Bead // open work beads, for the write-back
+	// measured holds the peak concurrency of the repositories set to
+	// "measure". It is shown, not simulated: measured lead times already
+	// hold the wait for a free agent (ADR-2 §1).
+	measured map[string]int
+	gates    int // closed gates the human-gate lag was learned from
 }
 
 func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now time.Time) (*inputs, error) {
@@ -187,20 +187,31 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 
 	// Agent durations are learned from work beads only: gates wait on
 	// people, containers span other beads' work, goal beads coordinate.
+	// Lead times run from ready_at: for a closed bead as of its close, for
+	// an open one as of now.
 	var work []estimate.Bead
-	in := &inputs{measured: map[string]bool{}}
+	byID := map[string]estimate.Bead{}
+	readiness := forecast.NewReadiness(g)
+	in := &inputs{measured: map[string]int{}}
 	for _, i := range forecast.WorkBeads(g) {
 		b := bead(i)
+		asOf := now
+		if i.Closed() && !i.ClosedAt.IsZero() {
+			asOf = i.ClosedAt
+		}
+		b.ReadyAt, b.Blocked = readiness.At(i, asOf)
 		work = append(work, b)
+		byID[b.ID] = b
 		if !i.Closed() {
 			in.open = append(in.open, b)
 		}
 	}
 	model, err := estimate.Learn(work, now, estimate.Params{
-		WindowDays:        m.WindowDays,
-		Seed:              m.Seed,
+		WindowDays: m.WindowDays,
+		Seed:       m.Seed,
+		// A lead time is a queue and a cycle: its prior is two cycle priors.
+		LeadPriorMinutes:  2 * m.CycleMinutesPrior,
 		CyclePriorMinutes: m.CycleMinutesPrior,
-		QueuePriorMinutes: m.CycleMinutesPrior,
 		PoolingStrength:   m.PoolingStrength,
 		TailCapFactor:     m.TailCapFactor,
 	})
@@ -218,10 +229,12 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 	measured := forecast.MeasureConcurrency(g, names, now, window)
 	concurrency := map[string]int{}
 	for _, r := range cfg.Repos {
+		// A configured agent limit is honoured; "measure" measures and
+		// shows the peak but sets no limit.
 		concurrency[r.Name] = r.Concurrency.Max
 		if r.Concurrency.Measure() {
-			concurrency[r.Name] = measured[r.Name]
-			in.measured[r.Name] = true
+			concurrency[r.Name] = 0
+			in.measured[r.Name] = measured[r.Name]
 		}
 	}
 	outside := map[string][]string{}
@@ -235,26 +248,37 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 		Runs:        m.Simulations,
 		Seed:        m.Seed,
 		Concurrency: concurrency,
-		Agent:       func(i *graph.Issue) forecast.Sampler { return model.Sampler(bead(i)) },
-		Human:       forecast.HumanLag(lags, m.HumanGateHoursPrior*60, m.PoolingStrength, m.TailCapFactor),
-		Outside:     outside,
+		Agent: func(i *graph.Issue) forecast.Sampler {
+			b, ok := byID[i.ID]
+			if !ok {
+				b = bead(i)
+				b.ReadyAt, b.Blocked = readiness.At(i, now)
+			}
+			return model.Sampler(b)
+		},
+		Human:   forecast.HumanLag(lags, m.HumanGateHoursPrior*60, m.PoolingStrength, m.TailCapFactor),
+		Outside: outside,
+		// Every dated item carries its quantile grid, p05 to p99: the one
+		// snapshots record and calibration scores.
+		Grid: calibrate.Levels,
 	}
 	return in, nil
 }
 
-// bead is what the estimator needs to know about an issue.
+// bead is what the estimator needs to know about an issue, but for when it
+// became ready, which depends on the moment asked about.
 func bead(i *graph.Issue) estimate.Bead {
 	b := estimate.Bead{
 		ID:          i.ID,
 		Repo:        i.Repo,
 		Type:        i.Type,
+		Priority:    i.Priority,
 		Status:      i.Status,
-		Description: i.Description,
-		Labels:      i.Labels,
-		Children:    len(i.Children),
 		CreatedAt:   i.CreatedAt,
 		StartedAt:   i.StartedAt,
 		ClosedAt:    i.ClosedAt,
+		CloseReason: i.CloseReason,
+		WorkOutcome: metadataString(i, "gc.work_outcome"),
 	}
 	if i.EstimatedMinutes != nil {
 		b.EstimatedMinutes = *i.EstimatedMinutes
@@ -272,6 +296,15 @@ func bead(i *graph.Issue) estimate.Bead {
 		}
 	}
 	return b
+}
+
+// metadataString returns a string metadata value of i, or "".
+func metadataString(i *graph.Issue, key string) string {
+	var v string
+	if raw, ok := i.Metadata[key]; ok && json.Unmarshal(raw, &v) == nil {
+		return v
+	}
+	return ""
 }
 
 // repoDirs returns, per repository, the directory bd runs in for the
@@ -299,12 +332,13 @@ func printForecast(w io.Writer, res *forecast.Result, in *inputs) {
 	var agents []string
 	for _, name := range sortedKeys(res.Concurrency) {
 		a := fmt.Sprintf("%s %d", name, res.Concurrency[name])
-		if in.measured[name] {
-			a += " (measured)"
+		if peak, ok := in.measured[name]; ok {
+			a = fmt.Sprintf("%s no limit (peak %d)", name, peak)
 		}
 		agents = append(agents, a)
 	}
-	fmt.Fprintf(w, "agents: %s; human-gate lag from %s\n\n", strings.Join(agents, ", "), plural(in.gates, "closed gate"))
+	fmt.Fprintf(w, "agents: %s; human-gate lag from %s\n", strings.Join(agents, ", "), plural(in.gates, "closed gate"))
+	fmt.Fprintf(w, "%s\n\n", learnedFrom(in.model.Sample()))
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ITEM\tSTATUS\tDONE\tLEFT\tP50\tP80\tP95\tAGENT H\tHUMAN H\tCRITICAL CHAIN (P80)")
@@ -329,6 +363,23 @@ func printForecast(w io.Writer, res *forecast.Result, in *inputs) {
 		row("goal ", it)
 	}
 	tw.Flush()
+}
+
+// learnedFrom says what the estimator learned from, and which closes it
+// left out because they were not deliveries.
+func learnedFrom(s estimate.Sample) string {
+	out := fmt.Sprintf("learned from %s (%d with a start) and %s", plural(s.Closes, "delivered close"), s.Started,
+		plural(s.Open, "open bead"))
+	var skipped []string
+	for _, reason := range estimate.SkipReasons {
+		if n := s.Skipped[reason]; n > 0 {
+			skipped = append(skipped, fmt.Sprintf("%d %s", n, reason))
+		}
+	}
+	if len(skipped) > 0 {
+		out += "; left out " + strings.Join(skipped, ", ")
+	}
+	return out
 }
 
 // chain shortens a critical chain for the table.

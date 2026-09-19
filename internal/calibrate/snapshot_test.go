@@ -23,8 +23,7 @@ var now = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 // constant is a sampler with fixed durations, in minutes.
 type constant struct{ q, w float64 }
 
-func (c constant) Queue(*rand.Rand) float64 { return c.q }
-func (c constant) Work(*rand.Rand) float64  { return c.w }
+func (c constant) Draw(*rand.Rand) (float64, float64) { return c.q, c.w }
 
 // parse parses JSONL lines as the export of repo "r".
 func parse(t testing.TB, lines ...string) *load.Exports {

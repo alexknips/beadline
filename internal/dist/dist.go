@@ -34,20 +34,26 @@ func (p Prior) Quantile(q float64) float64 {
 	return p.Median * math.Exp(p.Sigma*math.Sqrt2*math.Erfinv(2*q-1))
 }
 
-// Dist is one node of a backoff chain for one quantity (cycle time, queue
-// latency or human-gate latency). A node with n observations draws from them
-// with probability n/(n+k) and from its parent otherwise. The root is a
-// Prior. Every draw of a chain is clamped to the chain's tail cap.
+// Dist is one node of a backoff chain for one quantity (lead time, cycle
+// time, queue latency or human-gate latency). A node with n observations
+// draws from them with probability n/(n+k) and from its parent otherwise.
+// The root is a Prior. Every draw of a chain is clamped to the chain's tail
+// cap, except the Lindy fallback of SampleBeyond.
 //
 // A Dist is immutable once built and safe for concurrent use; randomness
 // comes only from the *rand.Rand passed to each draw.
 type Dist struct {
 	parent *Dist
 	prior  Prior     // root only
-	logs   []float64 // own observations: log minutes, ascending
-	h      float64   // smoothing bandwidth in log space
-	own    float64   // probability of drawing from own observations
-	cap    float64   // tail cap in minutes, shared by the whole chain
+	logs   []float64 // own completed observations: log minutes, ascending
+	// cum is the cumulative Kaplan–Meier mass of logs when some observations
+	// were censored, nil when each observation weighs the same. The mass
+	// left over, 1 − cum[last], is drawn beyond tail (log minutes).
+	cum  []float64
+	tail float64
+	h    float64 // smoothing bandwidth in log space
+	own  float64 // probability of drawing from own observations
+	cap  float64 // tail cap in minutes, shared by the whole chain
 }
 
 // NewRoot returns the root of a chain. all holds every observation of the
@@ -82,7 +88,69 @@ func (d *Dist) Child(minutes []float64, k float64) *Dist {
 	return c
 }
 
-// N returns the number of the node's own observations.
+// Censored returns a node over durations that ended (events) and durations
+// still running (censored: how long each has lasted so far), all in minutes,
+// fitted by Kaplan–Meier (ADR-2 §1). Each distinct event time carries the
+// Kaplan–Meier probability mass, so beads still open no longer make the
+// data look shorter than it is. When durations still run past the last
+// event, the survival mass left over becomes a tail beyond the longest
+// completed duration, as in the reference prototype: log(longest) +
+// |N(0, 1)| in log space, beyond the longest running one when none has
+// completed. The node draws from its own data with probability n/(n+k), n
+// counting both kinds. Without censored durations it is Child.
+func (d *Dist) Censored(events, censored []float64, k float64) *Dist {
+	if len(censored) == 0 {
+		return d.Child(events, k)
+	}
+	type obs struct {
+		x     float64
+		event bool
+	}
+	all := make([]obs, 0, len(events)+len(censored))
+	evLogs := make([]float64, 0, len(events))
+	for _, m := range events {
+		x := math.Log(math.Max(m, MinMinutes))
+		all = append(all, obs{x, true})
+		evLogs = append(evLogs, x)
+	}
+	for _, m := range censored {
+		all = append(all, obs{math.Log(math.Max(m, MinMinutes)), false})
+	}
+	sort.Slice(all, func(a, b int) bool { return all[a].x < all[b].x })
+	sort.Float64s(evLogs)
+
+	c := &Dist{parent: d, h: bandwidth(evLogs), cap: d.cap, tail: all[len(all)-1].x}
+	if len(evLogs) > 0 {
+		c.tail = evLogs[len(evLogs)-1]
+	}
+	c.own = float64(len(all)) / (float64(len(all)) + k)
+	// Kaplan–Meier: at each distinct time, the events there take their share
+	// of the survivors; a duration censored at a time is still at risk at it.
+	// The mass up to a time is one minus the survival there.
+	atRisk, surv := len(all), 1.0
+	for i := 0; i < len(all); {
+		x, died, gone := all[i].x, 0, 0
+		for ; i < len(all) && all[i].x == x; i++ {
+			if all[i].event {
+				died++
+			}
+			gone++
+		}
+		if died > 0 {
+			surv *= 1 - float64(died)/float64(atRisk)
+			c.logs = append(c.logs, x)
+			c.cum = append(c.cum, 1-surv)
+		}
+		atRisk -= gone
+	}
+	if c.cum == nil {
+		// Nothing has ended yet: all the mass is in the tail.
+		c.cum = []float64{}
+	}
+	return c
+}
+
+// N returns the number of the node's own completed observations.
 func (d *Dist) N() int { return len(d.logs) }
 
 // Sample draws one duration in minutes.
@@ -92,29 +160,50 @@ func (d *Dist) Sample(r *rand.Rand) float64 {
 		n = n.parent
 	}
 	var x float64
-	if n.parent == nil {
+	switch {
+	case n.parent == nil:
 		x = math.Log(n.prior.Median) + n.prior.Sigma*r.NormFloat64()
-	} else {
+	case n.cum == nil:
 		x = n.logs[r.IntN(len(n.logs))] + n.h*r.NormFloat64()
+	default:
+		u := r.Float64()
+		j := sort.Search(len(n.cum), func(j int) bool { return n.cum[j] > u })
+		if j == len(n.cum) {
+			// Survival mass beyond the data: somewhere past the longest
+			// completed duration.
+			x = n.tail + math.Abs(r.NormFloat64())
+		} else {
+			x = n.logs[j] + n.h*r.NormFloat64()
+		}
 	}
 	return math.Min(math.Exp(x), d.cap)
 }
 
 // SampleBeyond draws the remaining minutes of a duration that has already
-// lasted elapsed minutes: a draw conditioned on exceeding elapsed, by
-// rejection with up to 64 tries, minus elapsed. When no draw can exceed
-// elapsed the bead has outlasted almost all history, and the remaining time
-// is a fresh unconditioned draw.
+// lasted elapsed minutes (ADR-2 §1): a draw conditioned on exceeding
+// elapsed, by rejection with up to 64 tries, minus elapsed. When history
+// cannot cover the age, so that every try is rejected, the duration has
+// outlasted almost all of it, and the remaining time is Lindy's.
 func (d *Dist) SampleBeyond(r *rand.Rand, elapsed float64) float64 {
-	if elapsed <= 0 || elapsed >= d.cap {
+	if elapsed <= 0 {
 		return d.Sample(r)
 	}
-	for i := 0; i < beyondTries; i++ {
-		if x := d.Sample(r); x > elapsed {
-			return x - elapsed
+	if elapsed < d.cap {
+		for i := 0; i < beyondTries; i++ {
+			if x := d.Sample(r); x > elapsed {
+				return x - elapsed
+			}
 		}
 	}
-	return d.Sample(r)
+	return Lindy(r, elapsed)
+}
+
+// Lindy draws the rest of a duration that has lasted elapsed minutes and is
+// expected to last about as long again: elapsed × e^Z with Z ~ N(0, 1), so
+// the median remaining time is elapsed. It is not clamped at the tail cap: a
+// bead that has waited a month is not forecast to take hours.
+func Lindy(r *rand.Rand, elapsed float64) float64 {
+	return math.Max(MinMinutes, elapsed*math.Exp(r.NormFloat64()))
 }
 
 // Quantiles returns the qs-quantiles of n draws of sample.

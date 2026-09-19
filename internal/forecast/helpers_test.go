@@ -15,14 +15,14 @@ var now = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 // fixed is a sampler with constant durations.
 type fixed struct{ q, w float64 }
 
-func (f fixed) Queue(*rand.Rand) float64 { return f.q }
-func (f fixed) Work(*rand.Rand) float64  { return f.w }
+func (f fixed) Draw(*rand.Rand) (float64, float64) { return f.q, f.w }
 
 // lognormal is a sampler with log-normal queue and work times.
 type lognormal struct{ q, w, sigma float64 }
 
-func (l lognormal) Queue(r *rand.Rand) float64 { return l.q * math.Exp(l.sigma*r.NormFloat64()) }
-func (l lognormal) Work(r *rand.Rand) float64  { return l.w * math.Exp(l.sigma*r.NormFloat64()) }
+func (l lognormal) Draw(r *rand.Rand) (float64, float64) {
+	return l.q * math.Exp(l.sigma*r.NormFloat64()), l.w * math.Exp(l.sigma*r.NormFloat64())
+}
 
 // newGraph builds a graph. Issues default to repo "r", status "open" and
 // creation a day before now. Edges are [kind, from, to] as in graph.Link.

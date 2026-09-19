@@ -393,6 +393,47 @@ func TestGateLags(t *testing.T) {
 	}
 }
 
+// ready_at is the creation, or the last close among what a bead waits
+// for: its own blockers, its ancestors' blockers, and a container's
+// children (ADR-2 §1).
+func TestReadiness(t *testing.T) {
+	h := func(n int) time.Time { return now.Add(time.Duration(n) * time.Hour) }
+	g := newGraph(t, []*graph.Issue{
+		{ID: "a", Status: "closed", ClosedAt: h(-6)},
+		{ID: "b", Status: "closed", ClosedAt: h(-3)},
+		{ID: "late", Status: "closed", ClosedAt: h(2)},
+		{ID: "free", CreatedAt: h(-30)},
+		{ID: "x", CreatedAt: h(-30)},
+		{ID: "y", CreatedAt: h(-30)},
+		{ID: "open"},
+		{ID: "epic", HighLevel: true, CreatedAt: h(-40)},
+		{ID: "task", CreatedAt: h(-30)},
+		{ID: "e2", HighLevel: true, CreatedAt: h(-40)},
+		{ID: "t2", Status: "closed", CreatedAt: h(-30), ClosedAt: h(-1)},
+	}, blocks("a", "x"), blocks("b", "x"), blocks("a", "y"), blocks("late", "y"), blocks("open", "y"),
+		child("task", "epic"), blocks("b", "epic"), child("t2", "e2"))
+	r := NewReadiness(g)
+	for _, tt := range []struct {
+		id      string
+		at      time.Time
+		ready   time.Time
+		blocked bool
+	}{
+		{"free", now, h(-30), false},
+		{"x", now, h(-3), false},
+		{"x", h(-4), h(-6), true},   // as of before b closed
+		{"y", now, h(-6), true},     // "late" closes after now, "open" is open
+		{"task", now, h(-3), false}, // inherits the epic's blocker
+		{"e2", now, h(-1), false},   // a container waits for its children
+	} {
+		ready, blocked := r.At(g.Issue(tt.id), tt.at)
+		if !ready.Equal(tt.ready) || blocked != tt.blocked {
+			t.Errorf("%s as of %s: ready %s, blocked %v; want %s, %v", tt.id, tt.at.Format(time.RFC3339),
+				ready.Format(time.RFC3339), blocked, tt.ready.Format(time.RFC3339), tt.blocked)
+		}
+	}
+}
+
 func TestWorkBeads(t *testing.T) {
 	g := newGraph(t, []*graph.Issue{
 		{ID: "t", Status: "closed"}, {ID: "gate", HumanGate: true}, {ID: "e", HighLevel: true},

@@ -87,19 +87,57 @@ func MeasureConcurrency(g *graph.Graph, repos []string, now time.Time, window ti
 // children) to its own close. It is the sign-off lag, learned apart from
 // agent cycle time.
 func GateLags(g *graph.Graph, now time.Time, window time.Duration) []float64 {
-	p := &plan{g: g, now: now, ancestors: map[string]map[string]bool{}, blockers: map[string][]string{}}
+	r := NewReadiness(g)
 	since := now.Add(-window)
 	var out []float64
 	for _, i := range g.Issues() {
 		if !i.HumanGate || !i.Closed() || i.ClosedAt.IsZero() || !i.ClosedAt.After(since) || i.ClosedAt.After(now) {
 			continue
 		}
-		p.now = i.ClosedAt // only what closed before the gate made it ready
-		if ready := p.readyAt(i); !ready.IsZero() && !ready.After(i.ClosedAt) {
+		// Only what closed before the gate made it ready.
+		if ready, _ := r.At(i, i.ClosedAt); !ready.IsZero() && !ready.After(i.ClosedAt) {
 			out = append(out, minutes(i.ClosedAt.Sub(ready)))
 		}
 	}
 	return out
+}
+
+// Readiness tells when beads stopped waiting for other beads: the ready_at
+// that lead times run from (ADR-2 §1). It follows the simulation: a bead
+// waits for its own blockers and for those it inherits from its ancestors,
+// and a container for its children too. It caches what it derives from the
+// graph and is not safe for concurrent use.
+type Readiness struct{ p *plan }
+
+// NewReadiness returns the readiness of g's beads.
+func NewReadiness(g *graph.Graph) *Readiness {
+	p := &plan{g: g, goals: map[string]bool{}, ancestors: map[string]map[string]bool{}, blockers: map[string][]string{}}
+	for _, goal := range g.Goals() {
+		p.goals[goal.ID] = true
+	}
+	return &Readiness{p: p}
+}
+
+// At returns when i became ready as far as the moment now can tell: its
+// creation, or the latest close by now among the beads it waits for.
+// blocked reports that one of them was still open at now, so i was not
+// ready then.
+func (r *Readiness) At(i *graph.Issue, now time.Time) (ready time.Time, blocked bool) {
+	p := r.p
+	p.now = now
+	open := func(id string) bool {
+		b := p.g.Issue(id)
+		return !b.Closed() || b.ClosedAt.After(now)
+	}
+	for _, b := range p.blockersOf(i) {
+		blocked = blocked || open(b)
+	}
+	if p.container(i) {
+		for _, c := range i.Children {
+			blocked = blocked || open(c)
+		}
+	}
+	return p.readyAt(i), blocked
 }
 
 // HumanLag returns the Human option from observed gate lags (GateLags), as

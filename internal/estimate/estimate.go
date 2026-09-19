@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"math/rand/v2"
-	"strings"
+	"regexp"
+	"strconv"
 	"time"
-	"unicode/utf8"
 
 	"github.com/alexknips/beadline/internal/dist"
 )
@@ -16,16 +17,25 @@ import (
 // work beads only: orchestration (infra) types and high-level beads span
 // other work, and their durations would distort the classes and the tail cap.
 type Bead struct {
-	ID          string
-	Repo        string
-	Type        string
-	Status      string // bd status; "in_progress" marks a started bead
-	Description string
-	Labels      []string
-	Children    int // number of parent-child children
+	ID       string
+	Repo     string
+	Type     string
+	Priority int    // bd priority: 0 (P0) is the most urgent
+	Status   string // bd status; "in_progress" marks a started bead
 
 	// Zero when unknown.
 	CreatedAt, StartedAt, ClosedAt time.Time
+	// ReadyAt is when the bead stopped waiting for other beads (ADR-2 §1):
+	// its creation, or the close of its last blocker. For a closed bead it
+	// is as of its close, for an open one as of now. Zero means CreatedAt.
+	ReadyAt time.Time
+	// Blocked marks an open bead that still waits for an open blocker. It is
+	// not ready, so its lead time has not started.
+	Blocked bool
+
+	// CloseReason and WorkOutcome (Gas City's gc.work_outcome metadata) tell
+	// a delivery from a close that was not one.
+	CloseReason, WorkOutcome string
 
 	// EstimatedMinutes and P80Minutes are the numbers the bead already
 	// carries (bd's estimated_minutes and the P80MetadataKey metadata), 0 when
@@ -33,90 +43,57 @@ type Bead struct {
 	EstimatedMinutes, P80Minutes int
 }
 
-// StatusInProgress is the bd status of a bead an agent has started.
-const StatusInProgress = "in_progress"
+// Statuses with a meaning to the estimator.
+const (
+	// StatusInProgress is the bd status of a bead an agent has started.
+	StatusInProgress = "in_progress"
+	// statusDeferred is the bd status of a parked bead: nobody works it, so
+	// its age says nothing about lead times.
+	statusDeferred = "deferred"
+)
 
 func (b Bead) closed() bool { return !b.ClosedAt.IsZero() || b.Status == "closed" }
 
-// Size is a coarse size bucket: the size proxy of a class.
-type Size int
-
-// Size buckets.
-const (
-	Small Size = iota
-	Medium
-	Large
-)
-
-func (s Size) String() string { return [...]string{"S", "M", "L"}[s] }
-
-// Size thresholds: description length in characters and number of children.
-const (
-	mediumDescription = 400
-	largeDescription  = 1500
-	largeChildren     = 3
-)
-
-// SizeOf buckets a bead. A size:s, size:m or size:l label (case-insensitive;
-// xs and xl count as s and l) decides. Otherwise a bead is Large with a
-// description of 1500 characters or 3 children, Medium with 400 characters
-// or any child, and Small below that.
-func SizeOf(b Bead) Size {
-	for _, l := range b.Labels {
-		v, ok := strings.CutPrefix(strings.ToLower(l), "size:")
-		if !ok {
-			continue
-		}
-		switch v {
-		case "xs", "s":
-			return Small
-		case "m":
-			return Medium
-		case "l", "xl":
-			return Large
-		}
+// readyAt is ReadyAt, or CreatedAt when it is unknown.
+func (b Bead) readyAt() time.Time {
+	if b.ReadyAt.IsZero() {
+		return b.CreatedAt
 	}
-	n := utf8.RuneCountInString(b.Description)
-	switch {
-	case n >= largeDescription || b.Children >= largeChildren:
-		return Large
-	case n >= mediumDescription || b.Children > 0:
-		return Medium
-	}
-	return Small
+	return b.ReadyAt
 }
 
 // Class is the unit durations are learned for: repository × issue type ×
-// size bucket.
+// priority (ADR-2 §1). Priority orders lead times, from hours at P0 to days
+// at P3; description length does not.
 type Class struct {
 	Repo, Type string
-	Size       Size
+	Priority   int
 }
 
 // ClassOf returns the class of a bead.
-func ClassOf(b Bead) Class { return Class{Repo: b.Repo, Type: b.Type, Size: SizeOf(b)} }
+func ClassOf(b Bead) Class { return Class{Repo: b.Repo, Type: b.Type, Priority: b.Priority} }
 
-func (c Class) String() string { return c.Repo + "/" + c.Type + "/" + c.Size.String() }
+func (c Class) String() string { return c.Repo + "/" + c.Type + "/P" + strconv.Itoa(c.Priority) }
 
 // Params are the estimator settings; the [model] table of beadline.toml
 // supplies them (docs/design.md).
 type Params struct {
 	WindowDays        int     // learn from beads closed in the last WindowDays
 	Seed              uint64  // seeds the draws behind every reported quantile
+	LeadPriorMinutes  float64 // median of the lead-time root prior
 	CyclePriorMinutes float64 // median of the cycle-time root prior
-	QueuePriorMinutes float64 // median of the queue-latency root prior
 	PoolingStrength   float64 // k: pseudo-observations a node borrows from its parent
 	TailCapFactor     float64 // draws are capped at this × the longest observation
 }
 
-// DefaultParams matches the beadline.toml defaults. Queue latency has no key
-// of its own and shares cycle_minutes_prior.
+// DefaultParams matches the beadline.toml defaults. Lead time has no key of
+// its own: its prior is a queue and a cycle at cycle_minutes_prior each.
 func DefaultParams() Params {
 	return Params{
 		WindowDays:        45,
 		Seed:              1,
+		LeadPriorMinutes:  120,
 		CyclePriorMinutes: 60,
-		QueuePriorMinutes: 60,
 		PoolingStrength:   10,
 		TailCapFactor:     3,
 	}
@@ -127,11 +104,11 @@ func (p Params) validate() error {
 	if p.WindowDays <= 0 {
 		errs = append(errs, fmt.Errorf("window_days must be positive, got %d", p.WindowDays))
 	}
+	if !(p.LeadPriorMinutes > 0) {
+		errs = append(errs, fmt.Errorf("lead-time prior must be positive, got %v", p.LeadPriorMinutes))
+	}
 	if !(p.CyclePriorMinutes > 0) {
 		errs = append(errs, fmt.Errorf("cycle prior must be positive, got %v", p.CyclePriorMinutes))
-	}
-	if !(p.QueuePriorMinutes > 0) {
-		errs = append(errs, fmt.Errorf("queue prior must be positive, got %v", p.QueuePriorMinutes))
 	}
 	if !(p.PoolingStrength >= 0) {
 		errs = append(errs, fmt.Errorf("pooling_strength must not be negative, got %v", p.PoolingStrength))
@@ -142,107 +119,237 @@ func (p Params) validate() error {
 	return errors.Join(errs...)
 }
 
+// Reasons a close in the window does not teach durations: it was not a
+// delivery (sample hygiene, ADR-2 §1). Learn counts them, so they can be
+// shown.
+const (
+	SkipOutcome  = "no-op or abandoned" // gc.work_outcome is no-op or abandoned
+	SkipDescoped = "descoped"           // the close reason says duplicate, superseded, won't fix ...
+	SkipBulk     = "bulk close"         // BulkCloses or more closes of its repo in the same minute
+	SkipInstant  = "closed at once"     // closed less than InstantClose after its creation
+)
+
+// SkipReasons lists the Skip reasons in the order they are tested.
+var SkipReasons = []string{SkipOutcome, SkipDescoped, SkipBulk, SkipInstant}
+
+const (
+	// BulkCloses closes of one repo within one minute are an administrative
+	// cleanup, not deliveries.
+	BulkCloses = 5
+	// InstantClose: a bead closed this soon after its creation was filed as
+	// done or by mistake. No agent worked it.
+	InstantClose = time.Minute
+)
+
+// undeliveredReason matches the start of a close reason that says the bead
+// was not delivered. It deliberately does not look for words such as
+// "test" anywhere in the reason: those match genuine merges.
+var undeliveredReason = regexp.MustCompile(`(?i)^\s*(duplicate|dup of|supersed|won'?t (fix|do)|wontfix|obsolete|` +
+	`(not|no longer) needed|not planned|moot|abandon|descop|out of scope|closing stale|bulk[- ]?close)`)
+
+// Undelivered says why a close was not a delivery, judging by what it
+// states: SkipOutcome when its gc.work_outcome is no-op or abandoned,
+// SkipDescoped when its close reason starts with duplicate, superseded,
+// won't fix, obsolete, not needed, descoped, abandoned and the like, and ""
+// otherwise.
+func Undelivered(closeReason, workOutcome string) string {
+	switch {
+	case workOutcome == "no-op" || workOutcome == "abandoned":
+		return SkipOutcome
+	case undeliveredReason.MatchString(closeReason):
+		return SkipDescoped
+	}
+	return ""
+}
+
+// Sample describes what a model learned from.
+type Sample struct {
+	// Closes are the delivered closes in the window: every one teaches a
+	// lead time, and those with a start also a cycle time.
+	Closes, Started int
+	// Open are the beads still open that entered as censored lead or cycle
+	// times.
+	Open int
+	// Skipped counts the closes in the window that were not deliveries, by
+	// Skip reason.
+	Skipped map[string]int
+}
+
 // Quantiles are a duration's P50 and P80 in minutes.
 type Quantiles struct{ P50, P80 float64 }
 
 // quantileDraws is the number of draws behind every reported quantile.
 const quantileDraws = 4000
 
-// Model holds the learned cycle-time and queue-latency distributions of every
+// Model holds the learned lead-time and cycle-time distributions of every
 // class seen in the window, with their backoff chains. It is immutable and
 // safe for concurrent use.
 type Model struct {
-	params       Params
-	now          time.Time
-	cycle, queue chain
+	params      Params
+	now         time.Time
+	lead, cycle chain
+	sample      Sample
 }
 
 // Learn builds the model from the beads closed in the window
-// (now − WindowDays, now]. Cycle time runs from started_at to closed_at, or
-// from created_at when the bead has no usable start; queue latency runs from
-// created_at to started_at. Beads closed after now are ignored, so a model
-// can be learned as of a past moment.
+// (now − WindowDays, now] and the beads still open at now (ADR-2 §1).
+//
+//   - Lead time runs from ready_at to closed_at. Every delivered close
+//     teaches one.
+//   - Cycle time runs from started_at to closed_at, for closes with a start.
+//   - Beads still open enter as right-censored observations at their current
+//     age, when that age began in the window: a lead time for a ready bead
+//     (not blocked, not deferred), and a cycle time for one in progress.
+//     Kaplan–Meier weighs them (dist.Censored).
+//   - A close that was not a delivery teaches nothing (SkipReasons).
+//
+// Beads closed after now count as open, so a model can be learned as of a
+// past moment.
 func Learn(beads []Bead, now time.Time, p Params) (*Model, error) {
 	if err := p.validate(); err != nil {
 		return nil, fmt.Errorf("estimate: %w", err)
 	}
 	since := now.AddDate(0, 0, -p.WindowDays)
-	cycle, queue := newObservations(), newObservations()
+	type minute struct {
+		repo string
+		at   time.Time
+	}
+	perMinute := map[minute]int{}
+	closedBy := func(b Bead) bool { return !b.ClosedAt.IsZero() && !b.ClosedAt.After(now) }
 	for _, b := range beads {
-		if b.ClosedAt.IsZero() || !b.ClosedAt.After(since) || b.ClosedAt.After(now) {
+		if closedBy(b) {
+			perMinute[minute{b.Repo, b.ClosedAt.Truncate(time.Minute)}]++
+		}
+	}
+
+	lead, cycle := newObservations(), newObservations()
+	s := Sample{Skipped: map[string]int{}}
+	for _, b := range beads {
+		c := ClassOf(b)
+		ready := b.readyAt()
+		if closedBy(b) {
+			if !b.ClosedAt.After(since) {
+				continue
+			}
+			reason := Undelivered(b.CloseReason, b.WorkOutcome)
+			switch {
+			case reason != "":
+			case perMinute[minute{b.Repo, b.ClosedAt.Truncate(time.Minute)}] >= BulkCloses:
+				reason = SkipBulk
+			case !b.CreatedAt.IsZero() && b.ClosedAt.Sub(b.CreatedAt) < InstantClose:
+				reason = SkipInstant
+			}
+			if reason != "" {
+				s.Skipped[reason]++
+				continue
+			}
+			s.Closes++
+			if !ready.IsZero() && !ready.After(b.ClosedAt) {
+				lead.add(c, b.ClosedAt.Sub(ready).Minutes(), false)
+			}
+			if started(b, b.ClosedAt) {
+				s.Started++
+				cycle.add(c, b.ClosedAt.Sub(b.StartedAt).Minutes(), false)
+			}
 			continue
 		}
-		c := ClassOf(b)
-		start := b.StartedAt
-		if start.IsZero() || start.After(b.ClosedAt) {
-			start = b.CreatedAt
+		if (b.closed() && b.ClosedAt.IsZero()) || b.Status == statusDeferred {
+			// Closed at an unknown time, or parked.
+			continue
 		}
-		if !start.IsZero() && !start.After(b.ClosedAt) {
-			cycle.add(c, b.ClosedAt.Sub(start).Minutes())
+		inProgress := b.Status == StatusInProgress
+		entered := false
+		if inProgress && started(b, now) && b.StartedAt.After(since) {
+			cycle.add(c, now.Sub(b.StartedAt).Minutes(), true)
+			entered = true
 		}
-		if !b.CreatedAt.IsZero() && !b.StartedAt.IsZero() &&
-			!b.StartedAt.Before(b.CreatedAt) && !b.StartedAt.After(b.ClosedAt) {
-			queue.add(c, b.StartedAt.Sub(b.CreatedAt).Minutes())
+		if (inProgress || !b.Blocked) && !ready.IsZero() && ready.After(since) && !ready.After(now) {
+			lead.add(c, now.Sub(ready).Minutes(), true)
+			entered = true
+		}
+		if entered {
+			s.Open++
 		}
 	}
 	return &Model{
 		params: p,
 		now:    now,
+		lead:   lead.chain("lead", dist.NewPrior(p.LeadPriorMinutes), p),
 		cycle:  cycle.chain("cycle", dist.NewPrior(p.CyclePriorMinutes), p),
-		queue:  queue.chain("queue", dist.NewPrior(p.QueuePriorMinutes), p),
+		sample: s,
 	}, nil
 }
 
-// Sampler draws the durations of one open bead. The forecaster makes one per
-// bead and calls it once per simulation run.
-type Sampler struct {
-	queue, cycle *dist.Dist
-	started      bool
-	elapsed      float64 // minutes since started_at
+// started reports whether b has a usable start by t: after its creation,
+// not after t.
+func started(b Bead, t time.Time) bool {
+	return !b.StartedAt.IsZero() && !b.StartedAt.Before(b.CreatedAt) && !b.StartedAt.After(t)
 }
 
-// Sampler returns the sampler of an open bead, from the most specific node of
-// its class's backoff chain.
+// Sample returns what the model learned from.
+func (m *Model) Sample() Sample { return m.sample }
+
+// Sampler draws the remaining durations of one open bead. The forecaster
+// makes one per bead and calls it once per simulation run.
+type Sampler struct {
+	lead, cycle *dist.Dist
+	inProgress  bool
+	started     bool    // in progress with a known start
+	age         float64 // minutes since started_at when started, else since ready_at
+}
+
+// Sampler returns the sampler of an open bead, from the most specific nodes
+// of its class's backoff chains. Its draws are conditioned on its age
+// (ADR-2 §1): the time since started_at for a bead in progress, since
+// ready_at for any other bead that is ready, and none for a blocked bead,
+// whose lead time starts when its blockers close.
 func (m *Model) Sampler(b Bead) Sampler {
 	c := ClassOf(b)
-	s := Sampler{queue: m.queue.node(c).d, cycle: m.cycle.node(c).d}
-	if b.Status == StatusInProgress {
-		s.started = true
-		if !b.StartedAt.IsZero() && m.now.After(b.StartedAt) {
-			s.elapsed = m.now.Sub(b.StartedAt).Minutes()
-		}
+	s := Sampler{lead: m.lead.node(c).d, cycle: m.cycle.node(c).d, inProgress: b.Status == StatusInProgress}
+	since := time.Time{}
+	switch {
+	case s.inProgress && !b.StartedAt.IsZero():
+		s.started, since = true, b.StartedAt
+	case s.inProgress || !b.Blocked:
+		since = b.readyAt()
+	}
+	if !since.IsZero() && m.now.After(since) {
+		s.age = m.now.Sub(since).Minutes()
 	}
 	return s
 }
 
-// Queue draws the minutes before an agent starts the bead: zero once started.
-func (s Sampler) Queue(r *rand.Rand) float64 {
-	if s.started {
-		return 0
+// Draw draws the rest of the bead's lead time, in minutes, split into the
+// wait until an agent takes it up and the work that follows. A bead in
+// progress has no wait: it draws the rest of its cycle time, or of its lead
+// time when its start is unknown. Any other bead draws the rest of its lead
+// time, of which a cycle time (at most all of it) is work. Measured lead
+// times already hold the wait for a free agent, so only a configured agent
+// limit makes the split matter.
+func (s Sampler) Draw(r *rand.Rand) (queue, work float64) {
+	switch {
+	case s.started:
+		return 0, s.cycle.SampleBeyond(r, s.age)
+	case s.inProgress:
+		return 0, s.lead.SampleBeyond(r, s.age)
 	}
-	return s.queue.Sample(r)
+	lead := s.lead.SampleBeyond(r, s.age)
+	work = math.Min(lead, s.cycle.Sample(r))
+	return lead - work, work
 }
 
-// Work draws the remaining cycle time in minutes. For a started bead it is
-// conditioned on the time already spent (ADR-1 §2).
-func (s Sampler) Work(r *rand.Rand) float64 {
-	if s.started {
-		return s.cycle.SampleBeyond(r, s.elapsed)
-	}
-	return s.cycle.Sample(r)
-}
-
-// Estimate is the internal per-bead estimate. It feeds the simulation and
-// the optional write-back and is never shown.
+// Estimate is the internal per-bead estimate. It feeds the optional
+// write-back and is never shown.
 type Estimate struct {
 	ID, Repo string
 	Class    Class
-	Started  bool
+	Started  bool // in progress
 	// Cycle is the full cycle time: what the write-back records.
 	Cycle Quantiles
-	// Queue is the latency before start; zero for a started bead.
-	Queue Quantiles
-	// Remaining is the cycle time still to go; Cycle for a bead not started.
+	// Lead is the full lead time, from ready to close.
+	Lead Quantiles
+	// Remaining is the time still to go at the bead's age: the rest of its
+	// lead time, or of its cycle time when it is in progress.
 	Remaining Quantiles
 }
 
@@ -259,20 +366,21 @@ func (m *Model) Estimates(beads []Bead) []Estimate {
 
 // Estimate returns the estimate of one open bead. Quantiles come from 4,000
 // seeded draws of the same sampler the simulation uses. Beads that share a
-// node share its numbers; the remaining time of a started bead is drawn with
-// a source seeded by its ID.
+// node share its Cycle and Lead; Remaining is drawn with a source seeded by
+// the bead's ID.
 func (m *Model) Estimate(b Bead) Estimate {
 	c := ClassOf(b)
 	s := m.Sampler(b)
-	e := Estimate{ID: b.ID, Repo: b.Repo, Class: c, Started: s.started, Cycle: m.cycle.node(c).q}
-	e.Remaining = e.Cycle
-	if s.started {
-		r := seeded(m.params.Seed, "remaining", b.Repo+"/"+b.ID)
-		e.Remaining = quantiles(func() float64 { return s.Work(r) })
-	} else {
-		e.Queue = m.queue.node(c).q
+	r := seeded(m.params.Seed, "remaining", b.Repo+"/"+b.ID)
+	return Estimate{
+		ID: b.ID, Repo: b.Repo, Class: c, Started: s.inProgress,
+		Cycle: m.cycle.node(c).q,
+		Lead:  m.lead.node(c).q,
+		Remaining: quantiles(func() float64 {
+			q, w := s.Draw(r)
+			return q + w
+		}),
 	}
-	return e
 }
 
 func seeded(seed uint64, quantity, key string) *rand.Rand {
@@ -286,21 +394,39 @@ func quantiles(sample func() float64) Quantiles {
 	return Quantiles{P50: q[0], P80: q[1]}
 }
 
+// series are the durations of one backoff level: completed ones, and
+// censored ones that are still running.
+type series struct{ events, censored []float64 }
+
+func (s *series) add(m float64, censored bool) {
+	if censored {
+		s.censored = append(s.censored, m)
+	} else {
+		s.events = append(s.events, m)
+	}
+}
+
 // observations collects durations per backoff level.
 type observations struct {
-	all     []float64
-	repos   map[string][]float64
-	classes map[Class][]float64
+	all     series
+	repos   map[string]*series
+	classes map[Class]*series
 }
 
 func newObservations() *observations {
-	return &observations{repos: map[string][]float64{}, classes: map[Class][]float64{}}
+	return &observations{repos: map[string]*series{}, classes: map[Class]*series{}}
 }
 
-func (o *observations) add(c Class, m float64) {
-	o.all = append(o.all, m)
-	o.repos[c.Repo] = append(o.repos[c.Repo], m)
-	o.classes[c] = append(o.classes[c], m)
+func (o *observations) add(c Class, m float64, censored bool) {
+	if o.repos[c.Repo] == nil {
+		o.repos[c.Repo] = &series{}
+	}
+	if o.classes[c] == nil {
+		o.classes[c] = &series{}
+	}
+	o.all.add(m, censored)
+	o.repos[c.Repo].add(m, censored)
+	o.classes[c].add(m, censored)
 }
 
 // chain is the backoff tree of one quantity: class → repo → all → prior.
@@ -321,17 +447,20 @@ func (o *observations) chain(quantity string, prior dist.Prior, p Params) chain 
 		r := seeded(p.Seed, quantity, key)
 		return node{d: d, q: quantiles(func() float64 { return d.Sample(r) })}
 	}
-	root := dist.NewRoot(prior, o.all, p.TailCapFactor)
+	// The tail cap counts censored durations too: a bead open for a month
+	// shows that a month is possible.
+	longest := append(append([]float64(nil), o.all.events...), o.all.censored...)
+	root := dist.NewRoot(prior, longest, p.TailCapFactor)
 	c := chain{
-		all:     build("all", root.Child(o.all, p.PoolingStrength)),
+		all:     build("all", root.Censored(o.all.events, o.all.censored, p.PoolingStrength)),
 		repos:   make(map[string]node, len(o.repos)),
 		classes: make(map[Class]node, len(o.classes)),
 	}
-	for repo, obs := range o.repos {
-		c.repos[repo] = build("repo:"+repo, c.all.d.Child(obs, p.PoolingStrength))
+	for repo, s := range o.repos {
+		c.repos[repo] = build("repo:"+repo, c.all.d.Censored(s.events, s.censored, p.PoolingStrength))
 	}
-	for cl, obs := range o.classes {
-		c.classes[cl] = build("class:"+cl.String(), c.repos[cl.Repo].d.Child(obs, p.PoolingStrength))
+	for cl, s := range o.classes {
+		c.classes[cl] = build("class:"+cl.String(), c.repos[cl.Repo].d.Censored(s.events, s.censored, p.PoolingStrength))
 	}
 	return c
 }
