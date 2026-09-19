@@ -15,7 +15,8 @@ either asks a human to type dates or scales effort for human developers.
 
 ## Inputs
 - One or more beads sources. v0: `bd export` JSONL files (universal across Dolt/SQLite backends);
-  later: live `bd … --json` and a Dolt reader.
+  later: live `bd … --json` and a Dolt reader. *Superseded by ADR-2 §5:* a repo directory is read live
+  through `bd -C DIR --readonly export`, and a JSONL file still works.
 - `beadline.toml`:
   ```toml
   [[repos]]
@@ -41,7 +42,8 @@ either asks a human to type dates or scales effort for human developers.
   ```
   Every key but `[[repos]]` is optional. The defaults are the values shown, except that
   `human_gate_title_patterns` defaults to `["^HUMAN:"]` and `concurrency` to `"measure"`. An unknown
-  key is an error, so a typo cannot silently fall back to a default.
+  key is an error, so a typo cannot silently fall back to a default. *Superseded by ADR-2 §5:* the
+  config is `repos` plus an `[expert]` table, and one repo needs none.
 
 ### Loading rules (bl-ya5.2)
 - **One graph across repos.** Exports are read in config order. bd prefixes keep IDs unique, so
@@ -59,18 +61,23 @@ either asks a human to type dates or scales effort for human developers.
   optional, because it often lives in a coordination repo that is not forecast.
 - **Reported, not fatal.** The loader reports dependencies on IDs that no loaded repo has, duplicate
   IDs, and cycles (strongly connected components) of blocking or of parent-child edges. `beadline
-  check` prints them. It exits 1 only for a cycle among open beads, since no schedule can satisfy
-  one. Malformed JSON, by contrast, is fatal, and the error names the file and line.
+  check` prints them (`beadline doctor` under ADR-2 §5). It exits 1 only for a cycle among open
+  beads, since no schedule can satisfy one. Malformed JSON, by contrast, is fatal, and the error names
+  the file and line.
 
 ## Model
 ### 1. Estimator (per bead, invisible)
 - Class = (repo, issue_type, size bucket). Size proxy: description length, child count, labels. A
   `size:s|m|l` label decides (`xs`, `xl` count as `s`, `l`). Otherwise a bead is **L** with a
   description of 1,500+ characters or 3+ children, **M** with 400+ characters or any child, else **S**.
+  *Superseded by ADR-2 §1:* class = (repo, issue_type, priority); size buckets are dropped.
 - From closed beads in `window_days`: empirical distribution of **cycle time** (`started_at → closed_at`,
   fallback `created_at → closed_at`) and **queue latency** (`created_at → started_at`). Only work
   beads count: the caller leaves out infra and high-level types, whose durations span other work.
-  Queue latency has no prior of its own and uses `cycle_minutes_prior`.
+  Queue latency has no prior of its own and uses `cycle_minutes_prior`. *Superseded by ADR-2 §1:*
+  queue latency runs from `ready_at`, a bead without `started_at` draws one `ready_at → closed_at` lead
+  time, still-open beads enter as censored observations, and every open bead's draw is conditioned on
+  its age.
 - Unseen class → repo prior → global prior. Fat tails are kept, never `median × count`: samples come
   from a smoothed bootstrap with hierarchical backoff and a tail cap (ADR-1 §2).
 - Optional write-back, off unless a command-line flag asks for it: `estimated_minutes` (P50) and
@@ -79,10 +86,12 @@ either asks a human to type dates or scales effort for human developers.
   skipped, so a repeated run writes nothing.
 
 ### 2. Forecaster (per high-level bead)
-- Collect remaining descendants via parent-child edges; blocking edges define order.
+- Collect remaining descendants via parent-child edges; blocking edges define order. *Refined by
+  ADR-2 §3:* the scope also takes in the upstream blocking closure.
 - Monte Carlo: for each run, agents pull ready beads (respecting `concurrency` per repo), each bead
   waits its sampled queue latency, then its sampled cycle time; children become ready when blockers
-  close. Milestone finish = last descendant closed.
+  close. Milestone finish = last descendant closed. *Superseded in part by ADR-2 §1:* the measured
+  concurrency no longer drives the dates.
 - Human gates: beads matching the gate patterns add a sampled human latency (prior from config,
   learned from history once available) *before* they can start.
 - Output per high-level bead: P50 / P80 dates, split into agent time and human-gate time, remaining
@@ -110,7 +119,8 @@ either asks a human to type dates or scales effort for human developers.
   `in_progress` hold their agent from the start, ignore their blockers, and draw only their
   remaining time (ADR-1 §2).
 - **Concurrency.** A configured number is a hard limit. `"measure"` takes the most work beads that
-  were in progress at once in the window (`started_at` to `closed_at`), at least 1.
+  were in progress at once in the window (`started_at` to `closed_at`), at least 1. *Superseded in
+  part by ADR-2 §1:* the measured value is still reported, but it no longer drives the dates.
 - **Human gates.** A gate is a wait, not work: it holds no agent. A gate leaf is done after its human
   wait; a container gate (e.g. an epic awaiting sign-off) waits after its children. The lag is learned
   from the gates closed in the window, from ready (the last blocker or child closed) to close, with the
@@ -141,10 +151,12 @@ either asks a human to type dates or scales effort for human developers.
 - **CLI.** `beadline forecast` prints the table, or with `-json` the forecast; `-now`, `-runs` and `-seed`
   override the defaults, and `-write-back` applies the estimator's write-back (off by default). It needs
   each export at `<repo>/.beads/<file>` and runs `bd` there with `BEADS_DIR` pinned to that directory.
+  *Superseded by ADR-2 §5:* the default command `beadline [DIR|FILE ...]` forecasts.
 
 ### 3. Calibration
 - Store each forecast snapshot. When a bead/milestone closes, record forecast-vs-actual. Report
-  coverage ("P80 held 78% of the time") and use it to widen/narrow intervals.
+  coverage ("P80 held 78% of the time") and use it to widen/narrow intervals. *See ADR-2 §6* for the
+  snapshot format, `beadline check` and the release gate.
 
 ### 4. Cost (optional adapter)
 - Given token usage per bead or per repo-week (adapters for orchestrator logs), forecast cost P50/P80
@@ -257,7 +269,8 @@ license and with how beadline is built (by AI agents). Consequently:
 
 ## Decisions — ADR-1 (bl-ya5.1)
 Status: **Accepted (Alex, 2026-09-19)**. The implementation beads (bl-ya5.2 to bl-ya5.8) build on
-these decisions.
+these decisions. **Partly superseded by ADR-2** (§2 classes, conditioning and censoring; `serve` and the
+subcommands of §4), as marked below.
 
 ### 1. Language and distribution: Go, one static binary
 - **Decision.** Go (go.mod pins the minimum, currently 1.22), built with `CGO_ENABLED=0`. Users install
@@ -265,10 +278,11 @@ these decisions.
   Like `bd`, there is no runtime to install.
 - **Why.** The standard library covers all of v0.1. `encoding/json` reads the JSONL exports.
   `html/template` with `embed` builds the single-file page and escapes untrusted bead titles by context.
-  `net/http` backs `serve`, and `os/exec` runs live `bd` and the optional `bv`. `math/rand/v2` gives a
-  seeded PCG, so a forecast is reproducible. Goroutines run simulations in parallel. 2,000 runs over a
-  few thousand beads is a plain CPU loop that Go finishes in well under a second. For statistics we
-  need sampling, quantiles and a bandwidth rule, roughly 150 lines, so scipy is not needed.
+  `net/http` backs `serve` (dropped by ADR-2 §5), and `os/exec` runs live `bd` and the optional `bv`.
+  `math/rand/v2` gives a seeded PCG, so a forecast is reproducible. Goroutines run simulations in
+  parallel. 2,000 runs over a few thousand beads is a plain CPU loop that Go finishes in well under a
+  second. For statistics we need sampling, quantiles and a bandwidth rule, roughly 150 lines, so scipy
+  is not needed.
 - **Rejected.** *Python*: numpy and scipy are attractive, but every user would need a Python
   environment, and packaging undercuts the "drop one binary into CI" story. *TypeScript*: it is the
   same language as the page, but shipping it needs Node or a compile step, and the page needs no
@@ -285,7 +299,8 @@ The same representation covers cycle time, queue latency and human-gate latency.
 - **Backoff chain.** class (repo × type × size bucket) → repo → all repos → root prior. A node with
   `n` observations draws from its own data with probability `n / (n + k)` and from its parent
   otherwise. `k` is `pooling_strength`, default 10. A class with no history is pure repo data, one with
-  10 observations is half its own, and one with 100 is 91 % its own.
+  10 observations is half its own, and one with 100 is 91 % its own. *Superseded in part by ADR-2
+  §1:* the class is repo × type × priority; the size bucket is dropped.
 - **Own-data draw.** Pick an observation uniformly and add Gaussian noise in log space. The bandwidth
   `h` follows Silverman's rule, `0.9 · min(sd, IQR/1.34) · n^(-1/5)`, with a minimum of 0.1. This keeps
   multi-modality, such as a clean pass versus a rejection-and-retry loop. Percentiles come out smooth
@@ -299,6 +314,8 @@ The same representation covers cycle time, queue latency and human-gate latency.
 - **In-progress beads.** Draw `d` conditioned on `d > elapsed` by rejection, up to 64 tries. The
   remaining time is `d − elapsed`. If every try is rejected, the bead is already beyond almost all
   history, so the remaining time is a fresh unconditioned draw. Started beads get no queue latency.
+  *Superseded by ADR-2 §1:* every open bead is conditioned on its age, and when every try is rejected
+  the fallback is Lindy (about as long again), not a fresh draw.
 - **Write-back numbers.** P50/P80 of 4,000 draws with the configured seed, from the same sampler the
   simulation uses, so the two always agree.
 - **Rejected.** *Pure empirical bootstrap*: it can never exceed the observed maximum, its percentiles
@@ -307,7 +324,8 @@ The same representation covers cycle time, queue latency and human-gate latency.
   work. The log-normal survives only as the root prior.
 - **Known bias.** Beads still open are missing from the closed-bead window (right-censoring), which
   makes estimates optimistic. v0.1 accepts this. Calibration (bl-ya5.6) measures coverage and widens
-  intervals. A Kaplan–Meier correction follows if coverage stays low.
+  intervals. A Kaplan–Meier correction follows if coverage stays low. *Superseded by ADR-2 §1:*
+  Kaplan–Meier censoring is in v0.1.
 
 ### 3. HTML stack: server-rendered, zero-dependency single file
 - **Decision.** Go `html/template` renders one `roadmap.html` with everything inline: CSS, a small
@@ -333,7 +351,7 @@ The same representation covers cycle time, queue latency and human-gate latency.
 | Path | Responsibility | Bead |
 |---|---|---|
 | `cmd/beadline` | `main`: passes `os.Args` and the standard streams to `internal/cli` | bl-ya5.1 |
-| `internal/cli` | subcommands (`check`, `forecast`, `render`, `serve`, `version`), flags, exit codes | bl-ya5.1, then each feature bead |
+| `internal/cli` | subcommands (`check`, `forecast`, `render`, `serve`, `version`; *superseded by ADR-2 §5*), flags, exit codes | bl-ya5.1, then each feature bead |
 | `internal/config` | `beadline.toml` schema, defaults, validation | bl-ya5.2 |
 | `internal/load` | `bd export` JSONL (one per repo) → graph | bl-ya5.2 |
 | `internal/graph` | issues and edges: descendants, topological order, cycles, critical chain (clean room) | bl-ya5.2, bl-ya5.4 |
@@ -353,3 +371,156 @@ The same representation covers cycle time, queue latency and human-gate latency.
   goroutine scheduling. Tests use fixed seeds.
 - `make check` is the gate. It runs a gofmt check, `go vet`, `go test ./...` and the clean-room check.
   CI (`.github/workflows/check.yml`) runs exactly `make check` on the Go version from go.mod.
+
+## Decisions — ADR-2 (bl-ya5.10)
+Status: **Accepted (Alex, 2026-09-19)**. It supersedes parts of ADR-1; each superseded passage above is
+marked where it stands. Source: the bl-ya5 comments of 2026-09-19, which hold the mayor's investigation
+and Alex's decisions D1–D3. The studies ran read-only on exports of the five town repos (1,233 beads)
+taken that day. Implementation: bl-ya5.12 (model), bl-ya5.11 (CLI), bl-ya5.6 (`check` and the backtest).
+
+### 1. Model: age-conditioned lead times (D1)
+- **Decision.** The remaining time of every open bead is drawn conditioned on its age. ADR-1 did this
+  for in-progress beads only. The Monte Carlo over the graph stays (Model §2); only the draw per bead
+  changes.
+- **Age conditioning.** A bead of age `a` draws `d` from its class with `d > a` and keeps `d − a`. Age
+  runs from `started_at` for a bead in progress, otherwise from `ready_at`.
+- **Lindy fallback.** When history cannot cover the age, so that every conditioned try is rejected,
+  the bead is expected to wait about as long again. The reference prototype draws `a × e^Z` with
+  `Z ~ N(0, 1)`, so the median remaining time equals the age. This replaces ADR-1's fresh unconditioned
+  draw, and it is not clamped at the tail cap. A straggler that has waited 30 days is no longer
+  forecast to take hours.
+- **Right-censoring in v0.1.** Kaplan–Meier weights the fit. Beads still open in the window enter it
+  as censored observations at their current age. The survival mass that KM leaves beyond the data
+  becomes a tail past the longest observation. ADR-1 §2 had deferred this as a known bias.
+- **Priority is the class key.** Class = repo × type × priority. Description-length size buckets are
+  dropped because they do not order lead time. Priority does: the median lead time is 3 h at P0 and
+  81 h at P3. The backoff chain and the `n / (n + k)` pooling of ADR-1 §2 are unchanged.
+- **Timing.** Queue latency runs from `ready_at`, the later of `created_at` and the close of the last
+  blocker, not from `created_at`: a blocked bead cannot be picked up. A bead with `started_at` learns
+  and draws a queue (`ready_at → started_at`) and a cycle (`started_at → closed_at`). Most beads have
+  no `started_at`: only 288 of the 1,233 carry one. The rest use one `ready_at → closed_at` lead time
+  with no separate queue draw.
+- **Concurrency.** It is still measured and shown, and an explicit agent count is still honoured. The
+  measured cap no longer drives the dates, because waiting for an agent is already inside a measured
+  lead time. In the backtest, removing the cap left ADR-1's epic coverage unchanged (P80 held 15%
+  either way).
+- **Rejected.** *Keep ADR-1 and let calibration widen its intervals.* To reach nominal coverage its
+  P80 horizons would need stretching ×23 for leaf beads and ×13 for epics, and no interval adjustment
+  recovers from that. ADR-2 needs ×1.1 and ×1. *Epic-duration baseline* (historical high-level
+  durations conditioned on the item's age): its P80 held 50%.
+
+### 2. A status instead of a fake date
+- **Decision.** An item with no plannable work shows a status instead of a date. The statuses are
+  unscoped (`not_planned`: nothing filed under it) and awaiting close (`ready_to_close`: all of its
+  work closed, the item still open). The others are `deferred`, `blocked_outside` (it waits on a repo
+  that is not loaded) and `stalled` (some of its work can never start). These are the statuses of
+  roadmap.json schema v1, and the values keep their names, so the schema version does not change.
+  `blocked_outside` and `stalled` keep their lower-bound dates (Simulation rules).
+- **Why.** Over the backtest origins, only 55 of 292 open high-level (item, origin) snapshots had
+  forecastable work. Of the rest, 216 had no children yet and 21 were shells whose children had all
+  closed. Any date for these would be invented.
+
+### 3. Scope of a high-level item
+- **Decision.** The scope is the parent-child descendants UNION the upstream blocking closure: every
+  bead that the item or its open work waits on, transitively, with that bead's descendants. Blocking
+  means `blocks`, plus `conditional-blocks` and `waits-for`, which the loader also treats as blocking.
+  `tracks`, `related`, `relates-to` and `discovered-from` are ignored for scheduling. `graph.Scope`
+  (bl-ya5.5) already implements this rule.
+
+### 4. Evidence
+A rolling-origin backtest ran with 32 origins every 3.5 days from 2026-05-25 to 2026-09-11. Each fit
+used only data from before its origin. "Held" means the bead or item closed on or before that
+quantile's date. ADR-2 was scored as the reference prototype (`bl_model.py`, model `lead_km`), not
+the Go code. The prototype measured lead time from `created_at`; `ready_at` (§1) is a refinement that
+the release gate (§6) re-measures. The archive, with scripts, tables in `results/*.out` and exports,
+is at `/home/ubuntu/gc/.gc/agents/mayor/beadline-forward-test-2026-09-19/`.
+
+**Leaf beads.** 546 forecasts of 139 beads.
+
+| Model | P50 held | P80 held | P80 90% CI (by bead) | P95 held | Bias of P50 | CRPS |
+|---|---|---|---|---|---|---|
+| ADR-1 as written | 11% | 25% | 20–33% | 41% | −8.0 d | 12.3 d |
+| ADR-2 | 45% | 79% | 72–86% | 90% | +1.4 d | 9.6 d |
+
+**Epics and milestones.** 55 forecasts of 11 items; the target is the item's close.
+
+| Model | P50 held | P80 held | P80 90% CI (by item) | Bias of P50 | CRPS |
+|---|---|---|---|---|---|
+| ADR-1 as written | 11% | 15% | 2–36% | −10.5 d | 11.9 d |
+| ADR-2 | 55% | 81% | 63–94% | +4.1 d | 10.4 d |
+| Baseline: epic duration | 16% | 50% | 36–68% | −5.7 d | 8.4 d |
+| Baseline: throughput only | 11% | 18% | 10–35% | −11.8 d | 14.6 d |
+
+- **Sample size.** Eleven items are too few to calibrate on, and the epic CI spans 31 points. That is
+  why the release gate (§6) uses leaf beads.
+- **Censoring.** Some forecasts could not be graded yet because the bead is still open and its P80
+  date has not passed. That applies to 142 of the 546 leaf forecasts under ADR-2 and 13 of the 55 epic
+  forecasts. The table grades only the known outcomes. If every ungraded forecast turns out held, or
+  every one missed, ADR-2's leaf P80 lies between 58% and 84%, and its epic P80 between 62% and 85%.
+- **CRPS.** Among the model variants, ADR-2 scores the lowest CRPS. The epic-duration baseline scores
+  lower still, because its distribution is sharp around dates that hold only half the time.
+- **Retro-forecast.** A separate study replayed 5 closed milestones. ADR-1's P80 held 2 of 10 times.
+- **Ablation.** Each change is applied alone unless stated. The leaf rows start from ADR-1's 25%.
+
+  | Change | P80 held | Effect |
+  |---|---|---|
+  | ADR-1 + age conditioning + Lindy fallback (leaf) | 72% | the main fix |
+  | ADR-1 + age conditioning (leaf) | 38% | |
+  | ADR-1 + Lindy fallback (leaf) | 26% | none alone |
+  | ADR-1 + Kaplan–Meier (leaf) | 41% | |
+  | ADR-1 + priority classes (leaf) | 25% | none alone |
+  | ADR-1 without the concurrency cap (epics) | 15% → 15% | none |
+  | ADR-2 + a sign-off lag (epics) | 81% → 81% | about 0.1 d |
+
+### 5. CLI: one command (D2)
+- **Decision.** The whole surface is:
+  - `beadline [DIR|FILE ...]` forecasts, writes `roadmap.html` and `roadmap.json`, and records a
+    snapshot (§6). A DIR is a repo with `.beads`, read live through `bd -C DIR --readonly export`. A
+    FILE is a `bd export` JSONL file. One repo needs no config.
+  - `beadline check` grades past forecasts, and `beadline check --backtest` replays history (§6).
+  - `beadline doctor` validates the data. It is the loader's current `check`, renamed so that `check`
+    means grading forecasts.
+- **Config.** `repos` plus an `[expert]` table for everything else. This replaces the `[[repos]]`,
+  `[conventions]` and `[model]` layout under Inputs.
+- **Dropped.** `serve`.
+- **Details.** Flags, defaults and wording are in bl-ya5.11. The exit codes of ADR-1 §4 stay.
+- **Why.** The usability study found that a first answer needed a config file plus three commands, and
+  that the page showed about 23 concepts. The target is one command and about 7 concepts.
+
+### 6. Accuracy: snapshots, grading and the release gate (D3)
+- **Snapshot format `beadline.snapshot/v1`.** roadmap.json carries it. Every run also writes an
+  immutable copy under `.beadline/snapshots/<as_of>_<contenthash>.json`, create-only and deduplicated
+  per day. It records the schema, `generated_at`, `as_of` (the data horizon), the model version (`adr-2`),
+  the beadline git commit, the seed, the resolved config with its hash, and the SHA-256 of each input
+  (with the bd/Dolt commit when known). Per item it records the id, title and status, a quantile grid
+  from p05 to p99 of completion dates, the descendant ids, the remaining ids, the scope state and the
+  assumptions. A content hash covers the whole snapshot. The grid enables PIT and CRPS. The id sets
+  separate model error from scope change. The format is specified in the bl-ya5.5 notes.
+- **Predict now, score later.** `beadline check` grades every stored snapshot against current data.
+  A forecast is resolved, open or void. Open is right-censored: of an open forecast, only "P80
+  already missed" can be known. Void means descoped or vanished. Coverage of P50/P80/P95 is reported
+  on known outcomes plus bounds, next to median absolute error, signed bias, and CRPS or pinball loss.
+  Leaf beads come first, as the honest sample, and high-level items second.
+- **Rolling-origin backtest.** `beadline check --backtest` replays history from one export. Each fit
+  uses only data from before its origin, and a throughput baseline is scored alongside.
+- **Release gate.** v0.1 ships only when the leaf-bead backtest on our own history holds P80 within
+  70–90%. `check --backtest` prints PASS or FAIL for it. The gate is a band, not a floor: below 70% the
+  dates are optimistic, and above 90% the intervals are too wide to plan with. It is judged on leaf
+  beads because they give hundreds of forecasts where epics give eleven items. The model is not tuned
+  on the test origins (bl-ya5.12).
+- **Track record.** The roadmap page shows the track record ("80% dates held X of Y") under the dates.
+- **Live forward test.** `snapshots_live/` in the archive holds 8 open items. ADR-1 and the ADR-2
+  prototype forecast them at 2026-09-19T07:09Z. They are scored on 2026-10-03 and 2026-10-31.
+
+### 7. Open question: wave dispatch and scope growth (recorded, not decided)
+The two studies disagree.
+- **The complex-projects study** finds large scope growth. By 25% of an item's life, the remaining work
+  that eventually lands is about twice what was filed (2.0×, pooled over the 15 closed milestones and
+  epics). Items decomposed at creation grow 1.00×, while items filled in progressively grow 2.46×.
+  Work also arrives in waves, dispatched after idle gaps of 5–22 days.
+- **The backtest** finds that scope growth is not the main miss. Under ADR-1, forecasts for epics
+  whose scope did not grow held P80 8% of the time, against 22% for those that grew. Under ADR-2 the
+  figures are 88% and 69%.
+- **Where they agree.** Stragglers that were closed by a decision cause the largest errors.
+
+ADR-2 adds no growth or wave model. Revisit after the live forward test is scored on 2026-10-03.
