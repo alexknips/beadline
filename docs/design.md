@@ -43,7 +43,8 @@ either asks a human to type dates or scales effort for human developers.
   Every key but `[[repos]]` is optional. The defaults are the values shown, except that
   `human_gate_title_patterns` defaults to `["^HUMAN:"]` and `concurrency` to `"measure"`. An unknown
   key is an error, so a typo cannot silently fall back to a default. *Superseded by ADR-2 §5:* the
-  config is `repos` plus an `[expert]` table, and one repo needs none.
+  config is `repos` plus an `[expert]` table, and one repo needs none (see "Command line and
+  beadline.toml").
 
 ### Loading rules (bl-ya5.2)
 - **One graph across repos.** Exports are read in config order. bd prefixes keep IDs unique, so
@@ -152,17 +153,18 @@ either asks a human to type dates or scales effort for human developers.
   override the defaults, and `-write-back` applies the estimator's write-back (off by default). It needs
   each export at `<repo>/.beads/<file>` and runs `bd` there with `BEADS_DIR` pinned to that directory.
   `-record` also records the forecast as a snapshot for calibration (§3).
-  *Superseded by ADR-2 §5:* the default command `beadline [DIR|FILE ...]` forecasts.
+  *Superseded by ADR-2 §5:* the default command `beadline [DIR|FILE ...]` forecasts, and `forecast`
+  is hidden.
 
 ### 3. Calibration (bl-ya5.6)
 A forecast is only worth what its track record says. `internal/calibrate` records forecasts, grades
 them once reality has moved on, and replays history to test the model before anyone trusts it.
 Both paths are graded and reported the same way. This implements ADR-2 §6, with two refinements
-recorded here: until the one-command CLI (bl-ya5.11) records a snapshot on every run,
-`forecast -record` writes them; and besides descoped and vanished, a void forecast can be parked or
+recorded here: every run of `beadline` records a snapshot (bl-ya5.11), as the hidden
+`forecast -record` does; and besides descoped and vanished, a void forecast can be parked or
 undated.
 
-- **Snapshots.** `beadline forecast -record` also writes the forecast as an immutable snapshot,
+- **Snapshots.** `beadline` (and `beadline forecast -record`) also writes the forecast as an immutable snapshot,
   `beadline.snapshot/v1`, into `.beadline/snapshots/` beside beadline.toml (or `-snapshots DIR`).
   - A snapshot records `generated_at` and `as_of` (the forecast's now, which the quantiles count
     from). It also records `beadline_version` and `beadline_commit`, `model_version` (`adr-1`
@@ -261,11 +263,14 @@ beads that actually closed, so it records exactly what went in.
 - **Provenance.** It records `generated_at` (the run's "now", UTC), `beadline_version` and
   `model_version` (the forecasting model revision, such as `adr-1`, and absent when nothing was
   forecast). It also records `config`, beadline.toml as used with defaults filled in, seed included.
-  `inputs.exports[]` gives each export's repo, path, SHA-256 and size, and `inputs.fingerprint`
-  hashes those in config order. Same fingerprint, config and seed give the same roadmap.
+  `inputs.exports[]` gives each export's repo, path, SHA-256 and size, with `live` when it was read
+  with `bd export` from a repository directory, and `inputs.fingerprint` hashes those in config
+  order. Same fingerprint, config and seed give the same roadmap. `config.hide` lists the beads left
+  off the roadmap, and `config.settings` the settings that differ from the defaults, in
+  beadline.toml syntax without `expert.` (bl-ya5.11).
 - **`repos[]`** are the swimlanes, in config order. Each has bead counts, `concurrency` and
   `concurrency_source` (`configured` or `measured`), and `rate_per_day` once the forecaster measures
-  it.
+  it. A repo that could not be read has `error`, and no beads (bl-ya5.11).
 - **`milestones[]`** holds every open high-level bead, plus those that closed within `window_days`.
   A bead that a goal label names appears as that goal instead. **`goals[]`** holds every goal named
   by a label, with its bead's title when that bead is loaded and `members[]`, its labelled high-level
@@ -297,12 +302,14 @@ beads that actually closed, so it records exactly what went in.
 - **`calibration`** holds `samples`, `p50_coverage` and `p80_coverage`. It is filled from the
   snapshot grading of §3 once the forecast writes roadmap.json, and absent until then.
 
-`roadmap.Build` fills everything the graph alone determines. The forecaster then sets the forecast
-fields (and `stalled`) and calls `Assess` again.
+`roadmap.Build` fills everything the graph alone determines. `Roadmap.SetForecast` then copies the
+forecaster's status (which knows `stalled` and parked work), dates, split of the median run and
+critical chain, and each repo's simulated agents and pace, and calls `Assess` again (bl-ya5.11).
 
 ### roadmap.html (bl-ya5.5)
-`beadline render --in roadmap.json --out roadmap.html [--title ...]` writes one file, replacing the
-old one atomically so a web server never serves half a page. The page follows ADR-1 §3:
+`beadline` writes the page next to roadmap.json; the hidden `beadline render --in roadmap.json --out
+roadmap.html [--title ...]` renders an existing roadmap.json. Either replaces the old file
+atomically, so a web server never serves half a page. The page follows ADR-1 §3:
 - **Timeline.** Inline SVG with a goals lane, then one lane per repo. Each open milestone or goal is
   a row. Its bar runs from now to P80, coloured by schedule, with a tick at P50, a whisker on to P95
   and a diamond at the target. A target that has already passed sits at the left edge in red. A row
@@ -313,6 +320,11 @@ old one atomically so a web server never serves half a page. The page follows AD
   waits on unloaded repos. They come from SVG `<title>` elements, which the script turns into a
   popover that also opens on keyboard focus.
 - **Table.** The same rows grouped by lane, done items included.
+- **Wording (bl-ya5.11).** The page says "plan for <date> (80% chance)" and "50/50: <date>": the
+  table's columns, the legend and the first line of each tooltip. P50, P80 and P95 appear only in
+  the JSON and on a second tooltip line for experts. A banner lists the repos that could not be
+  read, whose lanes say so, and the footer lists the non-default settings (`config.settings`), or
+  "Default settings.".
 - **Self-contained.** The page has no `src` or `href` attributes and no links. It makes no network
   requests. A `Content-Security-Policy` of `default-src 'none'` allows only the page's own inline
   style and script, by SHA-256. So the page works from `file://`, from any directory of a static
@@ -322,6 +334,85 @@ old one atomically so a web server never serves half a page. The page follows AD
   the lanes (goal rows follow their members' repos), a theme toggle (auto, light or dark) and the
   popover. It saves preferences in `localStorage` when that is available. Without it, both views
   show and the theme follows the system.
+
+## Command line and beadline.toml (bl-ya5.11)
+The surface of ADR-2 §5. `internal/cli` implements it; `beadline help` and `beadline help COMMAND`
+print it.
+
+```
+beadline [PATH...] [flags]   forecast; write roadmap.html and roadmap.json; record a snapshot
+beadline check [PATH...]     grade past forecasts (--backtest SPAN replays history; Calibration §3)
+beadline doctor [PATH...]    check the data: cycles, dangling dependencies, duplicate IDs
+beadline version             also --version and -v
+beadline help [COMMAND]
+```
+
+- **Repos.** A PATH is a repository directory with `.beads` (or the `.beads` directory itself), read
+  live with `bd -C DIR --readonly export`, or a `bd export` JSONL file. Directories are read in
+  parallel, with `BEADS_DIR` pinned to `DIR/.beads` so an inherited one cannot swap the database, and
+  with a 5-minute limit. Without PATH, beadline reads the repos listed in `beadline.toml`, else the
+  current directory when it holds `.beads`. The bead says "`.` if it has .beads, else the file's
+  repos"; the order is reversed because a file that lists repos is the more explicit of the two,
+  and a file with only `[expert]` still gets `.`. A repo is named after its directory, or its file's
+  name without the extension (`hivemind/.beads/issues.jsonl` is `hivemind`); a second repo with the
+  same name gets `-2`. Paths on the command line are relative to the working directory, paths in the
+  file to the file's directory. A first argument that names a command runs it; `./check` is a path.
+- **Outputs.** `-o DIR` (default `.`) writes `DIR/roadmap.html` and `DIR/roadmap.json`, creating
+  DIR. `-o FILE.html` or `-o FILE.json` names one file, and the other goes beside it with the same
+  stem. Both are written atomically. The snapshot (Calibration §3) goes to `.beadline/snapshots/`
+  beside beadline.toml, else in the working directory, where `beadline check` looks. It is not
+  recorded with `--no-record`, with `--as-of` (a snapshot must not be dated before its data), or when
+  a repo could not be read (it would miss that repo's work).
+- **Summary.** stdout gets the answer, soonest plan date first: each dated item as "plan for <date>
+  (80% chance) · 50/50: <date> · k of n left", then "waits on a person" when a human gate remains,
+  the target and schedule when `due_at` is set, and the caveat of a stalled or blocked item. The
+  items without a date follow, grouped by why: ready to close, stalled, waiting on repos that are not
+  loaded, not planned, deferred. stderr gets what was written and recorded, and a pointer to
+  `beadline doctor` when the data has problems. `--json` prints roadmap.json instead, `--explain ID`
+  prints what one item's dates rest on (scope, agent and human time, agents and pace, the critical
+  chain and the work left with each bead's expected time) or one bead's estimate, and `-q` prints
+  only errors and warnings. Nothing says "almost surely".
+- **Flags.** `-o/--out`, `-c/--config FILE` (default `./beadline.toml` when present), `--no-record`,
+  `--json`, `-q/--quiet`, `--explain ID`, `-h/--help`, `-v/--version`. Expert: `--as-of DATE`
+  (`2026-09-19` or RFC 3339), `--seed N`, `--runs N`, `--agents REPO=N` (or `REPO=measure`;
+  repeatable and comma-separated), `--bd PATH`. Flags may come before, between or after the paths;
+  `--` ends them.
+- **Exit codes** (ADR-1 §4). 0 ok. 1 failure, including a repo that could not be read or parsed:
+  the others still load, the page is still written with a banner, and stderr names the repo. When no
+  repo can be read, nothing is written. 2 usage error: an unknown flag, a stray argument, a PATH that
+  is neither a repository nor a file, or no repos at all. `-h` prints the command's help to stdout
+  and exits 0 on every command. `check` exits 1 rather than grade against a partial read, since a
+  forecast of a missing repo's work would look descoped.
+- **Version.** The linker-set version (`make build` stamps `git describe`), else the module version
+  of `go install ...@vX.Y.Z`, else `dev-<revision>` from the VCS stamp, else `dev`.
+- **Hidden and dropped.** `forecast` (the table, `--write-back`, `--record`) and `render` still work
+  and are not listed. `serve` is gone.
+- **beadline.toml.** Needed only for more than one repo or a non-default setting:
+  ```toml
+  repos = ["../hivemind", "../beadline", "exports/web.jsonl"]
+
+  [expert]
+  agents = { hivemind = 4 }         # agents per repo; default "measure" (from history)
+  roadmap_types = ["milestone", "epic"]
+  goal_label = "^goal:(?P<id>.+)$"
+  human_gate = { titles = ["^HUMAN:"], metadata = ["awaiting_signoff", "plan_first", "hold_reason"], hours_prior = 24 }
+  hide = []                         # high-level beads and goals to leave off the roadmap
+  history_days = 45
+  ignore_types = ["molecule", "wisp", "step", "convoy", "message", "gate", "event"]
+  runs = 2000
+  seed = 1
+  cycle_minutes_prior = 60
+  pooling_strength = 10
+  tail_cap_factor = 3
+  ```
+  The values shown for the expert keys are the defaults. They map onto the layout under Inputs:
+  `roadmap_types` is `high_level_types`, `goal_label` is `goal_label_pattern`, `human_gate.titles`,
+  `.metadata` and `.hours_prior` are the gate patterns, keys and prior, `history_days` is
+  `window_days`, `ignore_types` is `infra_types`, `runs` is `simulations`, and `agents` replaces
+  each repo's `concurrency`. An unknown key is an error that names the closest valid key ("unknown
+  key expert.agent; did you mean expert.agents?"), or the new name of a key of the old layout; an
+  old `[[repos]]` table says how to write `repos` now. `agents` for a repo that is not loaded is a
+  warning, since the command line may load fewer repos than the file lists.
 
 ## Relationship to beads_viewer (`bv`)
 `bv` (Dicklesworthstone/beads_viewer) already computes several things beadline needs: dependency graph
@@ -434,9 +525,9 @@ The same representation covers cycle time, queue latency and human-gate latency.
 | Path | Responsibility | Bead |
 |---|---|---|
 | `cmd/beadline` | `main`: passes `os.Args` and the standard streams to `internal/cli` | bl-ya5.1 |
-| `internal/cli` | subcommands (`forecast`, `check`, `doctor`, `render`, `serve`, `version`; *superseded by ADR-2 §5*), flags, exit codes | bl-ya5.1, then each feature bead |
+| `internal/cli` | subcommands (`forecast`, `check`, `doctor`, `render`, `serve`, `version`; *superseded by ADR-2 §5*: the one command, `check`, `doctor`, `version`, `help`), flags, exit codes | bl-ya5.1, then each feature bead |
 | `internal/config` | `beadline.toml` schema, defaults, validation | bl-ya5.2 |
-| `internal/load` | `bd export` JSONL (one per repo) → graph | bl-ya5.2 |
+| `internal/load` | `bd export` JSONL (one per repo, or read live with `bd`) → graph | bl-ya5.2, bl-ya5.11 |
 | `internal/graph` | issues and edges: descendants, topological order, cycles, critical chain (clean room) | bl-ya5.2, bl-ya5.4 |
 | `internal/dist` | duration distributions (§2) | bl-ya5.3 |
 | `internal/estimate` | classes, backoff chain, per-bead P50/P80, optional write-back | bl-ya5.3 |
@@ -566,7 +657,8 @@ is at `/home/ubuntu/gc/.gc/agents/mayor/beadline-forward-test-2026-09-19/`.
 - **Config.** `repos` plus an `[expert]` table for everything else. This replaces the `[[repos]]`,
   `[conventions]` and `[model]` layout under Inputs.
 - **Dropped.** `serve`.
-- **Details.** Flags, defaults and wording are in bl-ya5.11. The exit codes of ADR-1 §4 stay.
+- **Details.** Flags, defaults and wording are under "Command line and beadline.toml" (bl-ya5.11).
+  The exit codes of ADR-1 §4 stay.
 - **Why.** The usability study found that a first answer needed a config file plus three commands, and
   that the page showed about 23 concepts. The target is one command and about 7 concepts.
 

@@ -26,19 +26,21 @@ measures instead:
   P80 held.
 - **High-level only.** Milestones, epics and cross-repo goals are what you see; everything below is math.
 
-## How it will work
+## How it works
 ```
-beadline doctor   --config beadline.toml        # load the exports; report cycles and dangling dependencies
-beadline forecast --config beadline.toml        # -> roadmap.json (+ optional estimated_minutes write-back via bd)
-beadline forecast --record                      # also record today's forecast as a snapshot
-beadline check                                  # grade recorded forecasts against what closed since
-beadline check    --backtest 60d                # replay history: how often did P80 hold?
-beadline render   --out roadmap.html            # -> single-file static HTML, GitHub-Pages-able
-beadline serve                                  # local preview
+beadline                                   # in a repo with .beads: roadmap.html + roadmap.json in .
+beadline ../api ../web exports/hq.jsonl    # several repos, read live with bd, or bd export files
+beadline --explain api-m1                  # what one milestone's dates rest on
+beadline check                             # grade past forecasts against what closed since
+beadline check --backtest 60d              # replay history: how often did the 80% date hold?
+beadline doctor                            # check the data: cycles, dangling dependencies, duplicates
 ```
-Inputs: `bd export` JSONL per repository (works with every beads backend), or live `bd`. Multi-repo
-by config. Conventions (which types are "high level", which label links a goal to work across repos,
-what marks a human gate, concurrency per repo) are configuration, not assumptions.
+Every run forecasts, writes a single-file static `roadmap.html` (GitHub-Pages-able) and
+`roadmap.json`, prints each milestone as "plan for <date> (80% chance) · 50/50: <date>", and records
+a snapshot that `beadline check` grades later. One repo needs no config; several, or a changed
+default, take a `beadline.toml` of `repos = [...]` plus an `[expert]` table. Conventions (which types
+are "high level", which label links a goal to work across repos, what marks a human gate, agents per
+repo) are configuration, not assumptions. `beadline help` lists every flag.
 
 See [`docs/design.md`](docs/design.md) for the model and the open decisions.
 
