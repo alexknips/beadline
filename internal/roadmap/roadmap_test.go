@@ -239,6 +239,7 @@ func TestReadWriteRoundTrip(t *testing.T) {
 	hours, rate := 30.5, 4.25
 	m := &r.Milestones[0]
 	m.P50, m.P80, m.P95, m.AgentHours, m.RatePerDay, m.CriticalChain = &p50, &p80, &p95, &hours, &rate, []string{"api-3", "api-4"}
+	m.QuantileHours = map[string]float64{"p05": 2.5, "p50": 24, "p80": 60, "p95": 200, "p99": 410.25}
 	r.Calibration = &Calibration{Samples: 12, P50Coverage: 0.5, P80Coverage: 0.75}
 	r.Assess()
 
@@ -295,6 +296,9 @@ func TestReadRejects(t *testing.T) {
 		{"unknown repo", with("milestones", `[{"id":"m","repo":"elsewhere","status":"forecast","remaining_ids":[]}]`), `repo "elsewhere" is not in repos`},
 		{"counts", with("milestones", `[{"id":"m","repo":"r","status":"forecast","total":2,"done":0,"remaining":1,"remaining_ids":["t"]}]`), "do not add up"},
 		{"quantiles", with("milestones", `[{"id":"m","repo":"r","status":"forecast","remaining_ids":[],"p50":"2026-09-21T00:00:00Z","p80":"2026-09-20T00:00:00Z"}]`), "quantiles out of order"},
+		{"grid key", with("milestones", `[{"id":"m","repo":"r","status":"forecast","remaining_ids":[],"quantile_hours":{"median":3}}]`), `key "median" is not a level`},
+		{"grid order", with("milestones", `[{"id":"m","repo":"r","status":"forecast","remaining_ids":[],"quantile_hours":{"p05":3,"p50":2}}]`), "p50 (2) is before p05 (3)"},
+		{"grid negative", with("milestones", `[{"id":"m","repo":"r","status":"forecast","remaining_ids":[],"quantile_hours":{"p05":-1}}]`), "p05 is -1"},
 		{"duplicate id", with("goals", `[{"id":"m","title":"M","members":[],"status":"forecast","remaining_ids":[]}]`), "goal m: duplicate id"},
 		{"bad concurrency", with("config", `{"repos":[{"name":"r","export":"r.jsonl","concurrency":0}]}`), "concurrency must be"},
 		{"not JSON", map[string]string{"schema_version": "1,"}, "roadmap:"},

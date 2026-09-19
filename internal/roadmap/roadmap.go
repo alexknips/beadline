@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -226,6 +228,10 @@ type Outlook struct {
 	Concurrency *float64 `json:"concurrency,omitempty"`
 	// CriticalChain is the chain of beads that set the date, first to last.
 	CriticalChain []string `json:"critical_chain,omitempty"`
+	// QuantileHours is the forecast finish as a quantile grid in hours after
+	// generated_at, keyed "p05" … "p99" as in beadline.snapshot/v1 (ADR-2
+	// §6): the grid that calibration scores with the PIT and the CRPS.
+	QuantileHours map[string]float64 `json:"quantile_hours,omitempty"`
 }
 
 // Calibration reports how earlier forecasts held up.
@@ -336,7 +342,34 @@ func (o *Outlook) validate(where string) []error {
 	if (o.P50 != nil && o.P80 != nil && o.P80.Before(*o.P50)) || (o.P80 != nil && o.P95 != nil && o.P95.Before(*o.P80)) {
 		errs = append(errs, fmt.Errorf("%s: quantiles out of order (p50 <= p80 <= p95)", where))
 	}
+	if err := validGrid(o.QuantileHours); err != nil {
+		errs = append(errs, fmt.Errorf("%s: quantile_hours: %w", where, err))
+	}
 	return errs
+}
+
+// validGrid checks a quantile grid: keys p01 to p99, values not negative
+// and not decreasing with the level.
+func validGrid(g map[string]float64) error {
+	levels := make([]int, 0, len(g))
+	for k, v := range g {
+		n, err := strconv.Atoi(strings.TrimPrefix(k, "p"))
+		if !strings.HasPrefix(k, "p") || len(k) != 3 || err != nil || n < 1 || n > 99 {
+			return fmt.Errorf("key %q is not a level p01 to p99", k)
+		}
+		if !(v >= 0) {
+			return fmt.Errorf("%s is %v, want hours of at least 0", k, v)
+		}
+		levels = append(levels, n)
+	}
+	sort.Ints(levels)
+	for n := 1; n < len(levels); n++ {
+		lo, hi := fmt.Sprintf("p%02d", levels[n-1]), fmt.Sprintf("p%02d", levels[n])
+		if g[hi] < g[lo] {
+			return fmt.Errorf("%s (%v) is before %s (%v)", hi, g[hi], lo, g[lo])
+		}
+	}
+	return nil
 }
 
 // Write validates r and writes it as indented JSON.
