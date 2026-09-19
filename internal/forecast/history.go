@@ -1,0 +1,105 @@
+package forecast
+
+import (
+	"math/rand/v2"
+	"sort"
+	"time"
+
+	"github.com/alexknips/beadline/internal/dist"
+	"github.com/alexknips/beadline/internal/graph"
+)
+
+// IsWork reports whether an agent executes the bead: it is a leaf, not
+// high-level and not a human gate. Only work beads teach the estimator
+// agent durations; gates teach the human-gate lag (GateLags) instead, so
+// sign-off time never leaks into agent cycle time.
+func IsWork(i *graph.Issue) bool { return !isContainer(i) && !i.HumanGate }
+
+// MeasureConcurrency returns, for each repository, the most work beads that
+// were in progress at the same moment in the window before now. A bead is
+// in progress from started_at until closed_at, or until now while it is
+// open; beads without started_at are not counted. A repository with no
+// such bead gets 1.
+func MeasureConcurrency(g *graph.Graph, repos []string, now time.Time, window time.Duration) map[string]int {
+	since := now.Add(-window)
+	type edge struct {
+		t     time.Time
+		delta int
+	}
+	edges := map[string][]edge{}
+	for _, i := range g.Issues() {
+		if !IsWork(i) || i.StartedAt.IsZero() {
+			continue
+		}
+		end := now
+		if i.Closed() {
+			end = i.ClosedAt
+		}
+		// Clip to the window: only overlap inside it counts.
+		start := i.StartedAt
+		if start.Before(since) {
+			start = since
+		}
+		if end.After(now) {
+			end = now
+		}
+		if !end.After(start) {
+			continue
+		}
+		edges[i.Repo] = append(edges[i.Repo], edge{start, 1}, edge{end, -1})
+	}
+	out := make(map[string]int, len(repos))
+	for _, repo := range repos {
+		e := edges[repo]
+		// At equal times ends go first: back-to-back beads do not overlap.
+		sort.Slice(e, func(a, b int) bool {
+			if !e[a].t.Equal(e[b].t) {
+				return e[a].t.Before(e[b].t)
+			}
+			return e[a].delta < e[b].delta
+		})
+		peak, n := 1, 0
+		for _, x := range e {
+			n += x.delta
+			peak = max(peak, n)
+		}
+		out[repo] = peak
+	}
+	return out
+}
+
+// GateLags returns the human waits of the gates closed in the window
+// before now, in minutes: from when each gate became ready (its creation,
+// or the latest close among its blockers and, for a container, its
+// children) to its own close. It is the sign-off lag, learned apart from
+// agent cycle time.
+func GateLags(g *graph.Graph, now time.Time, window time.Duration) []float64 {
+	p := &plan{g: g, now: now, ancestors: map[string]map[string]bool{}, blockers: map[string][]string{}}
+	since := now.Add(-window)
+	var out []float64
+	for _, i := range g.Issues() {
+		if !i.HumanGate || !i.Closed() || i.ClosedAt.IsZero() || !i.ClosedAt.After(since) || i.ClosedAt.After(now) {
+			continue
+		}
+		p.now = i.ClosedAt // only what closed before the gate made it ready
+		if ready := p.readyAt(i); !ready.IsZero() && !ready.After(i.ClosedAt) {
+			out = append(out, minutes(i.ClosedAt.Sub(ready)))
+		}
+	}
+	return out
+}
+
+// HumanLag returns the Human option from observed gate lags (GateLags), as
+// ADR-1 §2 prescribes for every duration: a smoothed bootstrap over the
+// lags that backs off, with pooling strength k, to a log-normal root prior
+// with median priorMinutes, clamped to tailCapFactor × the longest lag. A
+// gate that has already waited draws the rest of a lag longer than that.
+func HumanLag(lags []float64, priorMinutes, k, tailCapFactor float64) func(*graph.Issue, float64) Draw {
+	d := dist.NewRoot(dist.NewPrior(priorMinutes), lags, tailCapFactor).Child(lags, k)
+	return func(_ *graph.Issue, waited float64) Draw {
+		if waited > 0 {
+			return func(r *rand.Rand) float64 { return d.SampleBeyond(r, waited) }
+		}
+		return d.Sample
+	}
+}
