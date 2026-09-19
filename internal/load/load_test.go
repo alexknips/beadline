@@ -2,6 +2,7 @@ package load
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -131,7 +132,7 @@ func TestMultiRepoFixture(t *testing.T) {
 		api1 := g.Issue("api-1")
 		want := graph.Issue{
 			ID: "api-1", Repo: "api", Title: "Token issuance", Description: "Issue signed access tokens.",
-			Type: "task", Status: "closed", Priority: 2, Assignee: "agent-1",
+			Type: "task", Status: "closed", CloseReason: "done", Priority: 2, Assignee: "agent-1",
 			CreatedAt: ts("2026-09-01T09:00:00Z"), UpdatedAt: ts("2026-09-01T09:00:00Z"),
 			StartedAt: ts("2026-09-01T10:00:00Z"), ClosedAt: ts("2026-09-01T12:30:00Z"),
 			Parents: []string{"api-e1"}, Blocks: []string{"api-2"},
@@ -258,5 +259,128 @@ func TestReadEdgeCases(t *testing.T) {
 	g, _, err = read(t, &cv, `{"id":"r-1","issue_type":"molecule"}`)
 	if err != nil || g.Issue("r-1") == nil {
 		t.Errorf("molecule with no infra types: %v, %v", g.Issue("r-1"), err)
+	}
+}
+
+func TestGraphAsOf(t *testing.T) {
+	cv := config.Default().Conventions
+	ex, err := Parse(Source{Repo: "r", Name: "r.jsonl", R: strings.NewReader(strings.Join([]string{
+		// Closed exactly at the moment: closed then.
+		`{"id":"r-1","status":"closed","close_reason":"done","created_at":"2026-09-01T08:00:00Z","started_at":"2026-09-01T10:00:00Z","closed_at":"2026-09-02T12:00:00Z","updated_at":"2026-09-02T12:00:00Z",` +
+			`"dependencies":[{"depends_on_id":"r-4","type":"blocks","created_at":"2026-09-03T09:00:00Z"}]}`,
+		// Not updated since: its deferral stands.
+		`{"id":"r-2","status":"deferred","defer_until":"2026-09-10T00:00:00Z","created_at":"2026-09-01T08:00:00Z","updated_at":"2026-09-01T09:00:00Z"}`,
+		// Updated since: whether it was deferred then is unknown.
+		`{"id":"r-3","status":"deferred","defer_until":"2026-09-10T00:00:00Z","created_at":"2026-09-01T08:00:00Z","updated_at":"2026-09-03T08:00:00Z"}`,
+		// Created later: absent, and edges to it are not dangling.
+		`{"id":"r-4","status":"open","created_at":"2026-09-03T08:00:00Z","updated_at":"2026-09-03T08:00:00Z"}`,
+		`{"id":"r-5","status":"in_progress","created_at":"2026-09-01T08:00:00Z","started_at":"2026-09-01T11:00:00Z","updated_at":"2026-09-03T08:00:00Z",` +
+			`"dependencies":[{"depends_on_id":"r-1","type":"blocks","created_at":"2026-09-01T09:00:00Z"},{"depends_on_id":"r-99","type":"blocks","created_at":"2026-09-01T09:00:00Z"}]}`,
+		// Started and closed later: open then, and its parent link came later too.
+		`{"id":"r-6","status":"closed","close_reason":"done","created_at":"2026-09-01T08:00:00Z","started_at":"2026-09-02T13:00:00Z","closed_at":"2026-09-03T10:00:00Z","updated_at":"2026-09-03T10:00:00Z",` +
+			`"dependencies":[{"depends_on_id":"r-2","type":"parent-child","created_at":"2026-09-02T13:00:00Z"}]}`,
+		// Infra records count towards the horizon.
+		`{"id":"r-w","issue_type":"wisp","status":"open","created_at":"2026-09-01T08:00:00Z","updated_at":"2026-09-03T11:00:00Z"}`,
+		// A dependency with no usable timestamp is assumed to have existed.
+		`{"id":"r-7","status":"open","created_at":"2026-09-01T08:00:00Z","dependencies":[{"depends_on_id":"r-2","type":"blocks","created_at":"last tuesday"}]}`,
+	}, "\n"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := ex.Horizon(); !h.Equal(ts("2026-09-03T11:00:00Z")) {
+		t.Errorf("Horizon = %v", h)
+	}
+	if s := ex.DependencySkew(); s != (Skew{}) {
+		t.Errorf("DependencySkew = %+v, want none", s)
+	}
+
+	at := ts("2026-09-02T12:00:00Z")
+	g, rep, err := ex.Graph(&cv, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(g.Issues()); !reflect.DeepEqual(got, []string{"r-1", "r-2", "r-3", "r-5", "r-6", "r-7"}) {
+		t.Fatalf("issues as of %v = %v", at, got)
+	}
+	if want := []Dangling{{Repo: "r", From: "r-5", To: "r-99", Kind: graph.Blocking}}; !reflect.DeepEqual(rep.Dangling, want) {
+		t.Errorf("dangling = %+v", rep.Dangling)
+	}
+	status := func(id string) string { return g.Issue(id).Status }
+	if r1 := g.Issue("r-1"); status("r-1") != "closed" || r1.CloseReason != "done" || !r1.ClosedAt.Equal(at) || r1.BlockedBy != nil {
+		t.Errorf("r-1 = %+v", r1)
+	}
+	if r2 := g.Issue("r-2"); status("r-2") != "deferred" || r2.DeferUntil.IsZero() {
+		t.Errorf("r-2 = %+v, want its deferral kept", r2)
+	}
+	if r3 := g.Issue("r-3"); status("r-3") != "open" || !r3.DeferUntil.IsZero() {
+		t.Errorf("r-3 = %+v, want open with no defer_until", r3)
+	}
+	if r5 := g.Issue("r-5"); status("r-5") != graph.StatusInProgress || !reflect.DeepEqual(r5.BlockedBy, []string{"r-1"}) {
+		t.Errorf("r-5 = %+v", r5)
+	}
+	if r6 := g.Issue("r-6"); status("r-6") != "open" || !r6.StartedAt.IsZero() || !r6.ClosedAt.IsZero() || r6.CloseReason != "" ||
+		r6.Parents != nil || !r6.UpdatedAt.IsZero() {
+		t.Errorf("r-6 = %+v", r6)
+	}
+	if r7 := g.Issue("r-7"); !reflect.DeepEqual(r7.BlockedBy, []string{"r-2"}) {
+		t.Errorf("r-7 = %+v", r7)
+	}
+
+	// The zero moment is the graph as exported; parsing once serves both.
+	now, _, err := ex.Graph(&cv, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if now.Len() != 7 || now.Issue("r-6").Status != "closed" || !reflect.DeepEqual(now.Issue("r-6").Parents, []string{"r-2"}) ||
+		now.Issue("r-3").Status != "deferred" {
+		t.Errorf("graph as exported changed by an earlier rewind: %v", ids(now.Issues()))
+	}
+}
+
+func TestDependencySkew(t *testing.T) {
+	cv := config.Default().Conventions
+	start := ts("2026-06-15T00:00:00Z")
+	var lines []string
+	add := func(n int, lag time.Duration) {
+		for k := 0; k < n; k++ {
+			id := len(lines) // two lines per pair
+			created := start.Add(time.Duration(id) * time.Hour)
+			lines = append(lines, fmt.Sprintf(`{"id":"r-%d","status":"open","created_at":%q}`, 2*id, created.Format(time.RFC3339)))
+			lines = append(lines, fmt.Sprintf(`{"id":"r-%d","status":"open","created_at":%q,"dependencies":[{"depends_on_id":"r-%d","type":"parent-child","created_at":%q}]}`,
+				2*id+1, created.Format(time.RFC3339), 2*id, created.Add(lag).Format(time.RFC3339)))
+		}
+	}
+	add(10, 30*time.Second) // before the time-zone error: no lag
+	skewed := len(lines)
+	add(25, 2*time.Hour+time.Minute)
+	parse := func() *Exports {
+		ex, err := Parse(Source{Repo: "r", Name: "r.jsonl", R: strings.NewReader(strings.Join(lines, "\n"))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ex
+	}
+	ex := parse()
+	want := Skew{Since: start.Add(time.Duration(skewed)*time.Hour + 2*time.Hour + time.Minute), Offset: 2 * time.Hour}
+	if got := ex.DependencySkew(); got != want {
+		t.Fatalf("DependencySkew = %+v, want %+v", got, want)
+	}
+	// An hour after the child was created, its parent link existed: the
+	// exported timestamp is two hours late.
+	child := fmt.Sprintf("r-%d", 2*skewed+1)
+	created := start.Add(time.Duration(skewed) * time.Hour)
+	g, _, err := ex.Graph(&cv, created.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g.Issue(child).Parents; len(got) != 1 {
+		t.Errorf("%s parents an hour after creation = %v, want the corrected link", child, got)
+	}
+
+	// Too few edges share the lag: no skew.
+	lines = lines[:skewed]
+	add(19, 2*time.Hour)
+	if got := parse().DependencySkew(); got != (Skew{}) {
+		t.Errorf("19 skewed edges: DependencySkew = %+v, want none", got)
 	}
 }

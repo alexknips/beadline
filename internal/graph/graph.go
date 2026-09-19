@@ -22,6 +22,7 @@ type Issue struct {
 	Description string
 	Type        string // issue_type
 	Status      string
+	CloseReason string
 	Priority    int
 	Assignee    string
 	Labels      []string
