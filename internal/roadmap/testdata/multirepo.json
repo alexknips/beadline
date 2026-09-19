@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-19T12:00:00Z",
+  "beadline_version": "test",
+  "config": {
+    "repos": [
+      {
+        "name": "api",
+        "export": "api.jsonl",
+        "concurrency": 3
+      },
+      {
+        "name": "web",
+        "export": "web.jsonl",
+        "concurrency": "measure"
+      },
+      {
+        "name": "hq",
+        "export": "hq.jsonl",
+        "concurrency": 1
+      }
+    ],
+    "conventions": {
+      "high_level_types": [
+        "milestone",
+        "epic"
+      ],
+      "goal_label_pattern": "^goal:(?P<id>.+)$",
+      "human_gate_title_patterns": [
+        "^HUMAN:"
+      ],
+      "human_gate_metadata_keys": [
+        "awaiting_signoff",
+        "hold_reason"
+      ],
+      "infra_types": [
+        "molecule",
+        "wisp",
+        "step",
+        "convoy",
+        "message",
+        "gate",
+        "event"
+      ]
+    },
+    "model": {
+      "window_days": 45,
+      "simulations": 2000,
+      "seed": 1,
+      "human_gate_hours_prior": 24,
+      "cycle_minutes_prior": 60,
+      "pooling_strength": 10,
+      "tail_cap_factor": 3
+    }
+  },
+  "inputs": {
+    "fingerprint": "sha256:320d4943330fe2ad5938b3bbc4f40284f3f11916386372c7d4814ced50a98638",
+    "exports": [
+      {
+        "repo": "api",
+        "path": "api.jsonl",
+        "sha256": "50c1a68b74ce7bb5ee0f1f9d68a65f7ab050b9139e0961a83b25425fbc2f268a",
+        "bytes": 5605
+      },
+      {
+        "repo": "web",
+        "path": "web.jsonl",
+        "sha256": "8f54f6d8c7e3c57859f7f5cfc0943749d0465d06062a74a7d4f33d7771dd93af",
+        "bytes": 3184
+      },
+      {
+        "repo": "hq",
+        "path": "hq.jsonl",
+        "sha256": "673dc67a7256299ae055049583a75a713714c2b95f07d9098b9a65a596a00d6f",
+        "bytes": 1379
+      }
+    ]
+  },
+  "repos": [
+    {
+      "name": "api",
+      "issues": 7,
+      "open": 5,
+      "closed": 2,
+      "concurrency": 3,
+      "concurrency_source": "configured"
+    },
+    {
+      "name": "web",
+      "issues": 6,
+      "open": 4,
+      "closed": 2,
+      "concurrency_source": "measured"
+    },
+    {
+      "name": "hq",
+      "issues": 2,
+      "open": 2,
+      "closed": 0,
+      "concurrency": 1,
+      "concurrency_source": "configured"
+    }
+  ],
+  "goals": [
+    {
+      "id": "hq-g1",
+      "title": "Public launch",
+      "repo": "hq",
+      "members": [
+        "api-m1",
+        "web-e1"
+      ],
+      "status": "forecast",
+      "total": 12,
+      "done": 2,
+      "remaining": 10,
+      "done_pct": 16.7,
+      "remaining_ids": [
+        "api-3",
+        "api-4",
+        "api-5",
+        "api-e1",
+        "api-m1",
+        "hq-h1",
+        "web-1",
+        "web-2",
+        "web-3",
+        "web-e1"
+      ],
+      "human_gates": 3
+    },
+    {
+      "id": "hq-g2",
+      "title": "hq-g2",
+      "members": [
+        "web-e2"
+      ],
+      "status": "done",
+      "closed_at": "2026-08-20T17:00:00Z",
+      "total": 2,
+      "done": 2,
+      "remaining": 0,
+      "done_pct": 100,
+      "remaining_ids": [],
+      "human_gates": 0
+    }
+  ],
+  "milestones": [
+    {
+      "id": "api-m1",
+      "title": "Public API v1",
+      "repo": "api",
+      "type": "milestone",
+      "goals": [
+        "hq-g1"
+      ],
+      "status": "forecast",
+      "target_due_at": "2026-10-15T00:00:00Z",
+      "total": 6,
+      "done": 2,
+      "remaining": 4,
+      "done_pct": 33.3,
+      "remaining_ids": [
+        "api-3",
+        "api-4",
+        "api-5",
+        "api-e1"
+      ],
+      "human_gates": 1
+    },
+    {
+      "id": "api-e1",
+      "title": "Auth",
+      "repo": "api",
+      "type": "epic",
+      "status": "forecast",
+      "total": 3,
+      "done": 2,
+      "remaining": 1,
+      "done_pct": 66.7,
+      "remaining_ids": [
+        "api-3"
+      ],
+      "human_gates": 0
+    },
+    {
+      "id": "web-e1",
+      "title": "Usage dashboard",
+      "repo": "web",
+      "type": "epic",
+      "goals": [
+        "hq-g1"
+      ],
+      "status": "forecast",
+      "total": 6,
+      "done": 0,
+      "remaining": 6,
+      "done_pct": 0,
+      "remaining_ids": [
+        "api-3",
+        "api-4",
+        "hq-h1",
+        "web-1",
+        "web-2",
+        "web-3"
+      ],
+      "human_gates": 2
+    },
+    {
+      "id": "web-e2",
+      "title": "Onboarding",
+      "repo": "web",
+      "type": "epic",
+      "goals": [
+        "hq-g2"
+      ],
+      "status": "done",
+      "closed_at": "2026-08-20T17:00:00Z",
+      "total": 1,
+      "done": 1,
+      "remaining": 0,
+      "done_pct": 100,
+      "remaining_ids": [],
+      "human_gates": 0
+    }
+  ]
+}
