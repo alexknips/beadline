@@ -21,5 +21,10 @@ cleanroom:
 		echo "cleanroom: beads_viewer in the module graph; see docs/design.md"; exit 1; \
 	fi
 
+# The version 'beadline version' prints: the latest tag and the commits
+# since, or the commit; without ldflags beadline falls back to the module
+# version, then the VCS revision.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 build:
-	CGO_ENABLED=0 $(GO) build -o bin/beadline ./cmd/beadline
+	CGO_ENABLED=0 $(GO) build -ldflags "-X github.com/alexknips/beadline/internal/cli.Version=$(VERSION)" -o bin/beadline ./cmd/beadline
