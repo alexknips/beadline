@@ -198,7 +198,7 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 	}
 	wg.Wait()
 
-	res := &Result{Now: o.Now, Runs: o.Runs, Seed: o.Seed, Concurrency: p.concurrency()}
+	res := &Result{Now: o.Now, Runs: o.Runs, Seed: o.Seed, Concurrency: p.concurrency(), Items: []Item{}, Goals: []Item{}}
 	traces := map[int]*sim{}
 	trace := func(run int) *sim {
 		if s := traces[run]; s != nil {

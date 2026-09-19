@@ -9,11 +9,24 @@ import (
 	"github.com/alexknips/beadline/internal/graph"
 )
 
-// IsWork reports whether an agent executes the bead: it is a leaf, not
-// high-level and not a human gate. Only work beads teach the estimator
-// agent durations; gates teach the human-gate lag (GateLags) instead, so
-// sign-off time never leaks into agent cycle time.
-func IsWork(i *graph.Issue) bool { return !isContainer(i) && !i.HumanGate }
+// WorkBeads returns the beads an agent executes, of any status, in load
+// order: leaves that are neither high-level, nor a human gate, nor a goal's
+// own bead. Only they teach the estimator agent durations; gates teach the
+// human-gate lag (GateLags) instead, so sign-off time never leaks into
+// agent cycle time.
+func WorkBeads(g *graph.Graph) []*graph.Issue {
+	goals := map[string]bool{}
+	for _, goal := range g.Goals() {
+		goals[goal.ID] = true
+	}
+	var out []*graph.Issue
+	for _, i := range g.Issues() {
+		if !isContainer(i) && !i.HumanGate && !goals[i.ID] {
+			out = append(out, i)
+		}
+	}
+	return out
+}
 
 // MeasureConcurrency returns, for each repository, the most work beads that
 // were in progress at the same moment in the window before now. A bead is
@@ -27,8 +40,8 @@ func MeasureConcurrency(g *graph.Graph, repos []string, now time.Time, window ti
 		delta int
 	}
 	edges := map[string][]edge{}
-	for _, i := range g.Issues() {
-		if !IsWork(i) || i.StartedAt.IsZero() {
+	for _, i := range WorkBeads(g) {
+		if i.StartedAt.IsZero() {
 			continue
 		}
 		end := now

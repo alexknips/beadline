@@ -128,16 +128,14 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 	window := time.Duration(m.WindowDays) * 24 * time.Hour
 
 	// Agent durations are learned from work beads only: gates wait on
-	// people, and containers span other beads' work.
+	// people, containers span other beads' work, goal beads coordinate.
 	var work []estimate.Bead
 	in := &inputs{measured: map[string]bool{}}
-	for _, i := range g.Issues() {
-		if forecast.IsWork(i) {
-			b := bead(i)
-			work = append(work, b)
-			if !i.Closed() {
-				in.open = append(in.open, b)
-			}
+	for _, i := range forecast.WorkBeads(g) {
+		b := bead(i)
+		work = append(work, b)
+		if !i.Closed() {
+			in.open = append(in.open, b)
 		}
 	}
 	model, err := estimate.Learn(work, now, estimate.Params{

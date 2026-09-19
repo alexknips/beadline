@@ -335,6 +335,13 @@ func TestOnTimeIsShareOfRuns(t *testing.T) {
 	}
 }
 
+func TestEmptyGraph(t *testing.T) {
+	res := run(t, newGraph(t, nil), options(fixed{}, 0))
+	if res.Items == nil || res.Goals == nil || len(res.Items)+len(res.Goals) != 0 {
+		t.Errorf("empty graph: items %v, goals %v; want empty, not nil (JSON [])", res.Items, res.Goals)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	g := newGraph(t, nil)
 	_, err := Run(g, Options{Concurrency: map[string]int{"r": -1}})
@@ -386,19 +393,17 @@ func TestGateLags(t *testing.T) {
 	}
 }
 
-func TestIsWork(t *testing.T) {
-	for _, c := range []struct {
-		i    graph.Issue
-		want bool
-	}{
-		{graph.Issue{ID: "t"}, true},
-		{graph.Issue{ID: "g", HumanGate: true}, false},
-		{graph.Issue{ID: "e", HighLevel: true}, false},
-		{graph.Issue{ID: "p", Children: []string{"c"}}, false},
-	} {
-		if got := IsWork(&c.i); got != c.want {
-			t.Errorf("IsWork(%s) = %v", c.i.ID, got)
-		}
+func TestWorkBeads(t *testing.T) {
+	g := newGraph(t, []*graph.Issue{
+		{ID: "t", Status: "closed"}, {ID: "gate", HumanGate: true}, {ID: "e", HighLevel: true},
+		{ID: "p"}, {ID: "c"}, {ID: "goal"}, {ID: "m", Goals: []string{"goal"}},
+	}, child("c", "p"))
+	var ids []string
+	for _, i := range WorkBeads(g) {
+		ids = append(ids, i.ID)
+	}
+	if want := []string{"t", "c", "m"}; !reflect.DeepEqual(ids, want) {
+		t.Errorf("WorkBeads = %v, want %v: no gates, containers or goal beads", ids, want)
 	}
 }
 
