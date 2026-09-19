@@ -64,13 +64,19 @@ either asks a human to type dates or scales effort for human developers.
 
 ## Model
 ### 1. Estimator (per bead, invisible)
-- Class = (repo, issue_type, size bucket). Size proxy: description length, child count, labels.
+- Class = (repo, issue_type, size bucket). Size proxy: description length, child count, labels. A
+  `size:s|m|l` label decides (`xs`, `xl` count as `s`, `l`). Otherwise a bead is **L** with a
+  description of 1,500+ characters or 3+ children, **M** with 400+ characters or any child, else **S**.
 - From closed beads in `window_days`: empirical distribution of **cycle time** (`started_at → closed_at`,
-  fallback `created_at → closed_at`) and **queue latency** (`created_at → started_at`).
+  fallback `created_at → closed_at`) and **queue latency** (`created_at → started_at`). Only work
+  beads count: the caller leaves out infra and high-level types, whose durations span other work.
+  Queue latency has no prior of its own and uses `cycle_minutes_prior`.
 - Unseen class → repo prior → global prior. Fat tails are kept, never `median × count`: samples come
   from a smoothed bootstrap with hierarchical backoff and a tail cap (ADR-1 §2).
-- Optional write-back: `estimated_minutes` (P50) and `ai_est_p80_minutes` on open beads via `bd update`,
-  so other tools (e.g. `bv --robot-capacity`) get agent-scale numbers.
+- Optional write-back, off unless a command-line flag asks for it: `estimated_minutes` (P50) and
+  `ai_est_p80_minutes` of the full cycle time on open beads via `bd update`, so other tools
+  (e.g. `bv --robot-capacity`) get agent-scale numbers. Beads that already carry the same numbers are
+  skipped, so a repeated run writes nothing.
 
 ### 2. Forecaster (per high-level bead)
 - Collect remaining descendants via parent-child edges; blocking edges define order.
