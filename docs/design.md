@@ -86,6 +86,54 @@ either asks a human to type dates or scales effort for human developers.
   (e.g. `bv --robot-capacity`) get agent-scale numbers. Beads that already carry the same numbers are
   skipped, so a repeated run writes nothing.
 
+#### Estimator rules (bl-ya5.12)
+This implements ADR-2 §1 in `internal/estimate` and `internal/dist`.
+- **Quantities.** Lead time runs from `ready_at` to `closed_at`. Every delivered close teaches one.
+  Cycle time runs from `started_at` to `closed_at`, and only closes with a usable start (after
+  creation, not after the close) teach it. There is no separate queue quantity, because the wait
+  for an agent is inside the lead time. This refines ADR-2 §1, which also named a queue
+  (`ready_at → started_at`) for beads with a start. As in the reference prototype, their lead time
+  covers it.
+- **`ready_at`.** It is the creation, or the latest close among the bead's blockers and the blockers
+  it inherits from its ancestors. It is taken as of the moment asked about: the close for a closed
+  bead, now for an open one. `forecast.Readiness` computes it by the simulation's rules.
+- **Classes.** A class is repo × issue_type × priority, with priority as bd stores it (P0 to P4). It
+  backs off to the repo, then to all repos, then to the root prior. The lead-time prior has a median
+  of twice `cycle_minutes_prior`: a queue and a cycle.
+- **Censoring.** A bead open at now enters the fit when its age began inside the window.
+  - A ready bead (not blocked, not deferred) enters as a censored lead time since `ready_at`.
+  - A bead in progress also enters as a censored cycle time since `started_at`. Its lead time counts
+    even with a blocker still open, because it has started.
+  - Kaplan–Meier weighs each distinct completed duration. Pooling counts both kinds: n / (n + k).
+  - The survival mass left after the longest completed duration is drawn beyond it, as
+    log(longest) + |N(0, 1)|, as in the reference prototype.
+  - The tail cap counts censored durations too.
+- **Sample hygiene.** A close in the window teaches nothing when it was not a delivery. The tests
+  run in this order:
+  - `gc.work_outcome` is `no-op` or `abandoned`.
+  - The close reason starts with duplicate, superseded, won't fix, obsolete, not needed, descoped,
+    closing stale, bulk close and the like. Grading uses the same rule (`estimate.Undelivered`). The
+    reason is never searched for words such as "test", which match genuine merges.
+  - 5 or more closes of its repo fall in the same minute.
+  - The bead closed less than a minute after its creation.
+
+  `beadline forecast` prints the counts: learned from N delivered closes (M with a start) and K open
+  beads, left out so many for each reason.
+- **Draws.** Every open bead's draw is conditioned on its age (`dist.SampleBeyond`).
+  - A bead in progress draws the rest of its cycle time since `started_at`, or the rest of its lead
+    time since `ready_at` when the start is unknown.
+  - Any other ready bead draws the rest of its lead time since `ready_at`.
+  - A blocked bead draws a whole lead time, which starts when its blockers close in the run.
+  - When 64 tries cannot exceed the age, the Lindy fallback draws age × e^Z with Z ~ N(0, 1). It is
+    not clamped at the tail cap.
+- **Wait and work.** A bead not started splits its lead-time draw into work and a wait. The work is a
+  cycle-time draw, at most the whole lead time; the wait is the rest. With no agent limit the split
+  changes nothing: the bead closes after its lead time. With a configured limit only the work holds
+  an agent. A measured concurrency sets no limit (ADR-2 §1), and it is printed as "no limit (peak
+  n)".
+- **Unchanged.** The write-back still records the class cycle time's P50 and P80. A ready human gate
+  draws the rest of its lag in the same way, Lindy fallback included.
+
 ### 2. Forecaster (per high-level bead)
 - Collect remaining descendants via parent-child edges; blocking edges define order. *Refined by
   ADR-2 §3:* the scope also takes in the upstream blocking closure.
@@ -118,7 +166,8 @@ either asks a human to type dates or scales effort for human developers.
 - **Work.** A ready work bead waits its queue latency, then for a free agent in its repo; among
   eligible beads the lowest priority number goes first, then the oldest. Beads already
   `in_progress` hold their agent from the start, ignore their blockers, and draw only their
-  remaining time (ADR-1 §2).
+  remaining time (ADR-1 §2). *Refined by ADR-2 §1 (bl-ya5.12):* the queue latency is the part of
+  the bead's lead-time draw that is not work (Estimator rules).
 - **Concurrency.** A configured number is a hard limit. `"measure"` takes the most work beads that
   were in progress at once in the window (`started_at` to `closed_at`), at least 1. *Superseded in
   part by ADR-2 §1:* the measured value is still reported, but it no longer drives the dates.
@@ -126,7 +175,8 @@ either asks a human to type dates or scales effort for human developers.
   wait; a container gate (e.g. an epic awaiting sign-off) waits after its children. The lag is learned
   from the gates closed in the window, from ready (the last blocker or child closed) to close, with the
   same smoothed bootstrap and `human_gate_hours_prior` as its root prior. A gate that is already ready
-  draws the rest of a lag longer than what it has waited. Gates, containers and goal beads never teach
+  draws the rest of a lag longer than what it has waited, or Lindy's when no lag seen is that long
+  (bl-ya5.12). Gates, containers and goal beads never teach
   the estimator: sign-off time does not leak into agent cycle time.
 - **Parked and stuck.** A bead with status `deferred` and no future `defer_until` is parked: left out of
   the schedule. A container does not wait for a parked child. A bead blocked by a parked bead, or in a
@@ -167,8 +217,8 @@ undated.
 - **Snapshots.** `beadline` (and `beadline forecast -record`) also writes the forecast as an immutable snapshot,
   `beadline.snapshot/v1`, into `.beadline/snapshots/` beside beadline.toml (or `-snapshots DIR`).
   - A snapshot records `generated_at` and `as_of` (the forecast's now, which the quantiles count
-    from). It also records `beadline_version` and `beadline_commit`, `model_version` (`adr-1`
-    until bl-ya5.12 moves the model to ADR-2), the seed and runs, the config echo with its
+    from). It also records `beadline_version` and `beadline_commit`, `model_version` (`adr-2`
+    since bl-ya5.12 moved the model to ADR-2, `adr-1` before), the seed and runs, the config echo with its
     `config_sha256`, and `inputs` (each export's SHA-256 and the fingerprint, as in roadmap.json).
   - `items[]` holds every open high-level bead and goal. Each has its status, `descendant_ids` (the
     breakdown at as_of, members included for a goal), `remaining_ids` and `assumptions` (what the
@@ -294,7 +344,10 @@ beads that actually closed, so it records exactly what went in.
   - **Forecast fields** are set by the forecaster and absent otherwise. They are `p50`, `p80` and
     `p95` (finish dates, UTC), and `agent_hours` and `human_hours`, which split the median run into
     agent time and time waiting on human gates. They also carry the inputs shown with the dates,
-    `rate_per_day` and `concurrency`, and `critical_chain[]`.
+    `rate_per_day` and `concurrency`, and `critical_chain[]`. `quantile_hours` is the finish as a
+    quantile grid in hours after `generated_at`, keyed `p05` … `p99` as in `beadline.snapshot/v1`
+    (ADR-2 §6, bl-ya5.12). It is what calibration scores with the PIT and the CRPS. Every forecast
+    carries the grid (`forecast.Item.GridHours`).
   - **`schedule`** compares the forecast with `target_due_at` (the bead's `due_at`). It is `on_track`
     when P80 falls on or before the target, `at_risk` when only P50 does, and `late` when P50 falls
     after it or the target has passed. It is absent when there is no target, or no forecast yet to
@@ -649,6 +702,33 @@ is at `/home/ubuntu/gc/.gc/agents/mayor/beadline-forward-test-2026-09-19/`.
   | ADR-1 + priority classes (leaf) | 25% | none alone |
   | ADR-1 without the concurrency cap (epics) | 15% → 15% | none |
   | ADR-2 + a sign-off lag (epics) | 81% → 81% | about 0.1 d |
+
+**The Go implementation (bl-ya5.12).** `beadline check -backtest` measured it on exports of the five
+town repos taken 2026-09-19 11:33 UTC (1,256 beads). "Before" is `adr-1`, the model on main before
+bl-ya5.12; "after" is `adr-2`. Each fit used only the data visible at its origin.
+
+| Span (origins) | Leaf beads | Model | P50 held | P80 held | P80 90% CI | P95 held | Bias of P50 | CRPS |
+|---|---|---|---|---|---|---|---|---|
+| 118 d (32) | 129 | adr-1 | 27% | 38% (193/509) | 30–49% | 58% | −3.6 d | 15.3 d |
+| 118 d (32) | 129 | adr-2 | 36% | 78% (312/398) | 72–85% | 90% | −0.3 d | 10.7 d |
+| 60 d (16) | 51 | adr-1 | 9% | 22% (66/305) | 15–30% | 48% | −8.9 d | 11.6 d |
+| 60 d (16) | 51 | adr-2 | 34% | 90% (181/202) | 84–95% | 99% | −0.8 d | 12.0 d |
+
+- **Release gate.** It passes on both spans: 78% and 90%. The 60-day span sits at the top of the
+  band, and its P95 held 99%, so the recent intervals are, if anything, too wide at the top.
+- **Pending forecasts.** Wider intervals leave more forecasts open and not yet past their P80: 122
+  of the 118-day span's 520 scored leaf forecasts, against 11 before. If they all resolve late, or
+  all in time, the leaf P80 lies between 60% and 83%.
+- **High-level items**, over the 118-day span (12 items, indicative): P80 held 85% (CI 64–97%)
+  against 51%, the bias of P50 is +2.5 d against −1.8 d, and the CRPS is 10.6 d against 12.5 d.
+- **Kaplan–Meier tail.** The mass is placed beyond the longest *completed* duration, as in the
+  prototype. The first port placed it beyond the oldest bead still open instead. That also passed
+  the gate (leaf P80 83%), but it made high-level dates 19 days late on average (P50 held 73%): an
+  item's date is a maximum over its beads, and one old open bead pushed every fresh bead of its class
+  weeks out.
+- **Blocked beads** draw a whole lead time from the moment their blockers close (§1: lead time runs
+  from `ready_at`). The prototype instead let a blocked bead close one cycle time after its blockers
+  or at its own lead time since creation, whichever came later.
 
 ### 5. CLI: one command (D2)
 - **Decision.** The whole surface is:

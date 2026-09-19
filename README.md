@@ -16,10 +16,12 @@ The beads ecosystem has excellent viewers, boards and Gantt renderers. What none
 someone typed (`due_at`, `[Q1]` prefixes) or per-issue effort guesses scaled for humans. beadline
 measures instead:
 
-- **Per-bead estimates are learned, never typed.** Cycle-time distributions per class (repo × type × size
-  proxy) from your closed beads. They are inputs; the roadmap never shows them.
+- **Per-bead estimates are learned, never typed.** Lead-time distributions per class (repo × type ×
+  priority), from when a bead became ready to its close, learned from your delivered beads with the
+  ones still open counted too. Every open bead's estimate is conditioned on how long it has already
+  waited. They are inputs; the roadmap never shows them.
 - **Forecasts are simulations.** Monte Carlo over each milestone's remaining descendants, honouring
-  dependency order, measured queue latency and your agents' real concurrency. Fat tails included.
+  dependency order. Fat tails included.
 - **Humans are modelled as gates.** Beads that wait on a person (configurable patterns) add a separate
   "waiting on a human" term — shown separately, because that is usually where the date moves.
 - **It calibrates itself.** Every closed bead compares forecast to actual; the page shows how often
