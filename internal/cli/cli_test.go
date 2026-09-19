@@ -32,7 +32,10 @@ func TestRun(t *testing.T) {
 		{"check bad flag", []string{"check", "--frobnicate"}, ExitUsage, "", "flag provided but not defined"},
 		{"check extra argument", []string{"check", "extra"}, ExitUsage, "", `unexpected argument "extra"`},
 		{"check -h", []string{"check", "-h"}, ExitOK, "", "-config"},
-		{"forecast stub", []string{"forecast"}, ExitFailure, "", "beadline forecast: not implemented yet"},
+		{"forecast missing config", []string{"forecast", "--config", "does-not-exist.toml"}, ExitFailure, "", "beadline forecast: open does-not-exist.toml"},
+		{"forecast bad now", []string{"forecast", "--now", "yesterday"}, ExitUsage, "", "-now: parsing time"},
+		{"forecast no runs", []string{"forecast", "--config", "../../testdata/multirepo/beadline.toml", "--runs", "0"}, ExitUsage, "", "-runs must be at least 1"},
+		{"forecast extra argument", []string{"forecast", "extra"}, ExitUsage, "", `unexpected argument "extra"`},
 		{"render stub", []string{"render"}, ExitFailure, "", "beadline render: not implemented yet"},
 		{"serve stub", []string{"serve"}, ExitFailure, "", "beadline serve: not implemented yet"},
 	}
