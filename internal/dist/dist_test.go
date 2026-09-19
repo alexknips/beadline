@@ -51,11 +51,12 @@ func TestNoHistoryIsThePrior(t *testing.T) {
 }
 
 // Plenty of data from a known log-normal: the draws reproduce its quantiles,
-// widened only slightly by the smoothing.
+// widened only slightly by the smoothing. k = 0 isolates the own-data draw
+// (TestPoolingWeight covers the pooling).
 func TestRecoversKnownLogNormal(t *testing.T) {
 	const median, sigma = 30.0, 0.5
 	obs := logNormal(rng(2), 1000, median, sigma)
-	d := NewRoot(NewPrior(600), obs, 3).Child(obs, 10)
+	d := NewRoot(NewPrior(600), obs, 3).Child(obs, 0)
 	q := quantiles(d, rng(3), 0.5, 0.8, 0.95)
 	within(t, "P50", q[0], median, 0.08)
 	within(t, "P80", q[1], median*math.Exp(sigma*0.8416), 0.08)
