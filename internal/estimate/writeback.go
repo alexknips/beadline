@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -60,7 +62,9 @@ func wholeMinutes(m float64) int { return max(1, int(math.Ceil(m))) }
 type Runner func(ctx context.Context, repo string, args []string) error
 
 // BdRunner returns a Runner that runs the bd binary (a name looked up in
-// PATH, or a path) in each repository's directory, as given by dirs.
+// PATH, or a path) in each repository's directory, as given by dirs. It
+// points BEADS_DIR at that directory's .beads, so a BEADS_DIR inherited from
+// the environment cannot send the write to another database.
 func BdRunner(bd string, dirs map[string]string) Runner {
 	return func(ctx context.Context, repo string, args []string) error {
 		dir, ok := dirs[repo]
@@ -69,6 +73,7 @@ func BdRunner(bd string, dirs map[string]string) Runner {
 		}
 		cmd := exec.CommandContext(ctx, bd, args...)
 		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "BEADS_DIR="+filepath.Join(dir, ".beads"))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s %s (in %s): %w: %s", bd, strings.Join(args, " "), dir, err, bytes.TrimSpace(out))
 		}

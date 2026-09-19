@@ -119,7 +119,11 @@ func TestBdRunner(t *testing.T) {
 	tmp := t.TempDir()
 	log := filepath.Join(tmp, "calls.log")
 	bd := filepath.Join(tmp, "bd")
-	script := "#!/bin/sh\necho \"$(basename \"$PWD\") $*\" >> " + log + "\n[ \"$2\" = fail ] && { echo 'no such issue' >&2; exit 1; }\nexit 0\n"
+	envLog := filepath.Join(tmp, "env.log")
+	script := "#!/bin/sh\necho \"$(basename \"$PWD\") $*\" >> " + log + "\necho \"$BEADS_DIR\" >> " + envLog +
+		"\n[ \"$2\" = fail ] && { echo 'no such issue' >&2; exit 1; }\nexit 0\n"
+	// An inherited BEADS_DIR must not redirect the write.
+	t.Setenv("BEADS_DIR", filepath.Join(tmp, "elsewhere", ".beads"))
 	if err := os.WriteFile(bd, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -150,5 +154,13 @@ func TestBdRunner(t *testing.T) {
 		"web update fail --estimate 1 --set-metadata ai_est_p80_minutes=2\n"
 	if string(data) != want {
 		t.Errorf("bd calls:\n%s\nwant\n%s", data, want)
+	}
+	env, err := os.ReadFile(envLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEnv := filepath.Join(dirs["api"], ".beads") + "\n" + filepath.Join(dirs["web"], ".beads") + "\n"
+	if string(env) != wantEnv {
+		t.Errorf("BEADS_DIR per call:\n%s\nwant\n%s", env, wantEnv)
 	}
 }
