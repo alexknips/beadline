@@ -156,6 +156,75 @@ either asks a human to type dates or scales effort for human developers.
 - `roadmap.html`: single file, no server, dark/light, table view for accessibility; swimlane per repo +
   goals lane; bars to P80 with P50 marker, target marker if `due_at` is set.
 
+### roadmap.json, schema version 1 (bl-ya5.5)
+`internal/roadmap` defines the file. It is the contract between forecast, render and calibrate. Each
+run's roadmap.json is also the immutable **snapshot** that calibration later scores against the
+beads that actually closed, so it records exactly what went in.
+- **Versioning.** `schema_version` is 1. Adding a field keeps the version. Renaming or removing a
+  field, or changing what one means, bumps it. A reader ignores unknown fields and rejects a newer
+  version instead of misreading it.
+- **Provenance.** It records `generated_at` (the run's "now", UTC), `beadline_version` and
+  `model_version` (the forecasting model revision, such as `adr-1`, and absent when nothing was
+  forecast). It also records `config`, beadline.toml as used with defaults filled in, seed included.
+  `inputs.exports[]` gives each export's repo, path, SHA-256 and size, and `inputs.fingerprint`
+  hashes those in config order. Same fingerprint, config and seed give the same roadmap.
+- **`repos[]`** are the swimlanes, in config order. Each has bead counts, `concurrency` and
+  `concurrency_source` (`configured` or `measured`), and `rate_per_day` once the forecaster measures
+  it.
+- **`milestones[]`** holds every open high-level bead, plus those that closed within `window_days`.
+  A bead that a goal label names appears as that goal instead. **`goals[]`** holds every goal named
+  by a label, with its bead's title when that bead is loaded and `members[]`, its labelled high-level
+  beads. Both share these fields:
+  - **Scope** (`graph.Scope`) covers the parent-child descendants, open or closed, plus every open
+    blocker of the bead or of open work in scope, transitively, with that blocker's open
+    descendants. Closed blockers are satisfied and are left out. A goal's scope is the union over
+    its labelled beads. `total = done + remaining`, and `done_pct` is `100 × done / total`.
+    `remaining_ids[]` is the exact open set the forecast covers, so calibration can tell a late
+    finish from scope that grew. `human_gates` counts the remaining gates. `waits_on_unloaded[]`
+    lists blockers that are in no loaded repo.
+  - **`status`** is one of `done`, `forecast`, `ready_to_close`, `not_planned`, `deferred`,
+    `blocked_outside` or `stalled`. `done` means closed; a goal whose bead is not loaded is done when
+    all its work is. `forecast` means open work remains. `ready_to_close` means all the work is
+    closed but the bead is still open. `not_planned` means there is no work under it at all.
+    `deferred` comes from the bd status or a future `defer_until`. `blocked_outside` means something
+    waits on an unloaded repo. `stalled` is set only by the forecaster.
+  - **Forecast fields** are set by the forecaster and absent otherwise. They are `p50`, `p80` and
+    `p95` (finish dates, UTC), and `agent_hours` and `human_hours`, which split the median run into
+    agent time and time waiting on human gates. They also carry the inputs shown with the dates,
+    `rate_per_day` and `concurrency`, and `critical_chain[]`.
+  - **`schedule`** compares the forecast with `target_due_at` (the bead's `due_at`). It is `on_track`
+    when P80 falls on or before the target, `at_risk` when only P50 does, and `late` when P50 falls
+    after it or the target has passed. It is absent when there is no target, or no forecast yet to
+    compare with. `Roadmap.Assess` computes it.
+- **`calibration`** holds `samples`, `p50_coverage` and `p80_coverage`. It is written by calibrate
+  (bl-ya5.6) and absent until then.
+
+`roadmap.Build` fills everything the graph alone determines. The forecaster then sets the forecast
+fields (and `stalled`) and calls `Assess` again.
+
+### roadmap.html (bl-ya5.5)
+`beadline render --in roadmap.json --out roadmap.html [--title ...]` writes one file, replacing the
+old one atomically so a web server never serves half a page. The page follows ADR-1 §3:
+- **Timeline.** Inline SVG with a goals lane, then one lane per repo. Each open milestone or goal is
+  a row. Its bar runs from now to P80, coloured by schedule, with a tick at P50, a whisker on to P95
+  and a diamond at the target. A target that has already passed sits at the left edge in red. A row
+  with no forecast shows its status instead of a bar. Done items appear only in the table and in
+  the lane counts. Low-level beads never get a row.
+- **Hover details** show the dates, the target and schedule, remaining work with done % and human
+  gates, pace (beads/day) and agents, agent and human time, the critical chain's length, and any
+  waits on unloaded repos. They come from SVG `<title>` elements, which the script turns into a
+  popover that also opens on keyboard focus.
+- **Table.** The same rows grouped by lane, done items included.
+- **Self-contained.** The page has no `src` or `href` attributes and no links. It makes no network
+  requests. A `Content-Security-Policy` of `default-src 'none'` allows only the page's own inline
+  style and script, by SHA-256. So the page works from `file://`, from any directory of a static
+  server, and next to other pages. `roadmap.json` is embedded as `<script type="application/json"
+  id="roadmap-data">`.
+- **Script.** Under 10 KB and optional. It adds a timeline/table toggle, a repo filter that re-stacks
+  the lanes (goal rows follow their members' repos), a theme toggle (auto, light or dark) and the
+  popover. It saves preferences in `localStorage` when that is available. Without it, both views
+  show and the theme follows the system.
+
 ## Relationship to beads_viewer (`bv`)
 `bv` (Dicklesworthstone/beads_viewer) already computes several things beadline needs: dependency graph
 construction and cycle detection, critical path, dependency-respecting execution "waves"
