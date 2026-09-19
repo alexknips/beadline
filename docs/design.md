@@ -90,6 +90,58 @@ either asks a human to type dates or scales effort for human developers.
 - Cross-repo goals: a goal's forecast is the max over the high-level beads carrying its
   `goal:<id>` label.
 
+#### Simulation rules (bl-ya5.4)
+- **Scope.** An item (a high-level bead, or a goal) waits for its descendants, open or closed, and,
+  transitively, for every open bead that it or its open work is blocked by, together with that
+  blocker's open descendants. Closed blockers are satisfied and left out. For a goal the members
+  and their scopes count. `total`, `closed`, `done_pct` and the remaining-bead set come from the
+  scope, by the same rule as `roadmap.json`.
+- **One schedule for everything.** Each run schedules every open bead of every loaded repo, not
+  one item at a time: items compete for the same agents, as they do in reality. Beads outside any
+  roadmap item take agents too. An item finishes, in that run, when the last bead of its scope
+  finishes; a goal therefore finishes with its last member, run by run.
+- **Readiness.** A bead is ready when its open blockers are done, and a container (a bead with
+  children, a high-level bead, or a goal's own bead) when its open children are too. A child also
+  waits for its ancestors' blockers, as bd does not offer the children of a blocked epic as ready
+  work; a blocker that sits under that same ancestor is not inherited, so an epic blocked by its own
+  child does not deadlock. `defer_until` in the future holds a bead back until then.
+- **Work.** A ready work bead waits its queue latency, then for a free agent in its repo; among
+  eligible beads the lowest priority number goes first, then the oldest. Beads already
+  `in_progress` hold their agent from the start, ignore their blockers, and draw only their
+  remaining time (ADR-1 §2).
+- **Concurrency.** A configured number is a hard limit. `"measure"` takes the most work beads that
+  were in progress at once in the window (`started_at` to `closed_at`), at least 1.
+- **Human gates.** A gate is a wait, not work: it holds no agent. A gate leaf is done after its human
+  wait; a container gate (e.g. an epic awaiting sign-off) waits after its children. The lag is learned
+  from the gates closed in the window, from ready (the last blocker or child closed) to close, with the
+  same smoothed bootstrap and `human_gate_hours_prior` as its root prior. A gate that is already ready
+  draws the rest of a lag longer than what it has waited. Gates, containers and goal beads never teach
+  the estimator: sign-off time does not leak into agent cycle time.
+- **Parked and stuck.** A bead with status `deferred` and no future `defer_until` is parked: left out of
+  the schedule. A container does not wait for a parked child. A bead blocked by a parked bead, or in a
+  blocking cycle, is stuck: it can never start.
+- **Status per item.** `deferred` (the item is deferred, or all of its remaining work is parked),
+  `not_planned` (empty scope), `ready_to_close` (all of the scope closed, the item open), `stalled` (some
+  of its work is stuck), `blocked_outside` (some of its work is blocked by a bead no loaded repo has),
+  else `forecast`. Only `forecast`, `blocked_outside` and `stalled` carry dates; for the last two the dates
+  cover the loaded, schedulable work and are a lower bound.
+- **Output.** P50, P80 and P95 are the nearest-rank runs, so every date is the outcome of an actual run.
+  Each is split into agent hours (queue, waiting for an agent, work) and human hours (gates, and waiting
+  for a `defer_until` a person set) along the chain that set it; the two add up to the time from now.
+  The critical chain is that of the P80 run: from the last bead to finish, each step is the predecessor
+  whose finish made the bead ready. Also reported: the share of runs that finish by `due_at`.
+- **Determinism.** Run *n* draws from a PCG seeded with (`seed`, *n*) and draws every duration before
+  scheduling, so the result does not depend on the number of goroutines, and two configurations that
+  differ only in concurrency see the same durations (common random numbers).
+- **Properties under test.** In every run the schedule respects dependencies and agent limits, unlimited
+  agents give exactly the longest path, and a blocking chain sets a floor. More agents never make a
+  reported quantile later. Within a single run they can, rarely: greedy list scheduling admits Graham's
+  anomalies (one more agent reorders work so that a bead finishes later, in about 0.2 % of paired runs on
+  random graphs), so the guarantee is on the quantiles.
+- **CLI.** `beadline forecast` prints the table, or with `-json` the forecast; `-now`, `-runs` and `-seed`
+  override the defaults, and `-write-back` applies the estimator's write-back (off by default). It needs
+  each export at `<repo>/.beads/<file>` and runs `bd` there with `BEADS_DIR` pinned to that directory.
+
 ### 3. Calibration
 - Store each forecast snapshot. When a bead/milestone closes, record forecast-vs-actual. Report
   coverage ("P80 held 78% of the time") and use it to widen/narrow intervals.
