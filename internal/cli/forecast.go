@@ -14,11 +14,13 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/alexknips/beadline/internal/calibrate"
 	"github.com/alexknips/beadline/internal/config"
 	"github.com/alexknips/beadline/internal/estimate"
 	"github.com/alexknips/beadline/internal/forecast"
 	"github.com/alexknips/beadline/internal/graph"
 	"github.com/alexknips/beadline/internal/load"
+	"github.com/alexknips/beadline/internal/roadmap"
 )
 
 // newBdRunner runs bd for --write-back; tests replace it.
@@ -37,6 +39,8 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 	seed := fs.Uint64("seed", 0, "random seed (default: model.seed)")
 	writeBack := fs.Bool("write-back", false, "write each open work bead's cycle-time P50 and P80 back to its repository with bd update")
 	bd := fs.String("bd", "bd", "bd binary used by -write-back")
+	record := fs.Bool("record", false, "also record the forecast as a snapshot for 'beadline check' (the first run of each day)")
+	snapshots := fs.String("snapshots", "", "snapshot directory for -record (default: .beadline/snapshots beside beadline.toml)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return ExitOK
@@ -45,6 +49,10 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "beadline forecast: unexpected argument %q\n", fs.Arg(0))
+		return ExitUsage
+	}
+	if *record && *nowFlag != "" {
+		fmt.Fprintf(stderr, "beadline forecast: -record takes no -now: a snapshot must not be dated before the data it was made from\n")
 		return ExitUsage
 	}
 	now := time.Now().UTC().Truncate(time.Second)
@@ -81,9 +89,20 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
+	var inputs roadmap.Inputs
+	if *record {
+		// Hash the exports right after loading them: the snapshot names
+		// exactly the data it was made from.
+		if inputs, err = roadmap.Fingerprint(cfg); err != nil {
+			return fail(err)
+		}
+	}
 	in, err := forecastInputs(cfg, g, rep, now)
 	if err != nil {
 		return fail(err)
+	}
+	if *record {
+		in.options.Grid = calibrate.Levels
 	}
 	res, err := forecast.Run(g, in.options)
 	if err != nil {
@@ -98,6 +117,28 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		printForecast(stdout, res, in)
+	}
+
+	if *record {
+		snap, err := calibrate.New(res, g, calibrate.Meta{
+			GeneratedAt:     time.Now(),
+			BeadlineVersion: version(),
+			BeadlineCommit:  commit(),
+			Config:          roadmap.ConfigOf(cfg),
+			Inputs:          inputs,
+		})
+		if err != nil {
+			return fail(err)
+		}
+		path, existing, err := calibrate.Record(snapshotDir(cfg, *snapshots), snap)
+		switch {
+		case err != nil:
+			return fail(fmt.Errorf("-record: %w", err))
+		case existing != "":
+			fmt.Fprintf(stderr, "kept today's snapshot %s\n", existing)
+		default:
+			fmt.Fprintf(stderr, "recorded snapshot %s\n", path)
+		}
 	}
 
 	if *writeBack {

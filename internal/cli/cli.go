@@ -27,8 +27,9 @@ type command struct {
 
 func commands() []command {
 	return []command{
-		{"check", "load the configured exports and report graph problems", runCheck},
 		{"forecast", "simulate the remaining graph and print the forecast", runForecast},
+		{"check", "grade past forecasts against what closed since, or backtest history", runCheck},
+		{"doctor", "load the configured exports and report graph problems", runDoctor},
 		{"render", "render roadmap.json as a single-file HTML page", runRender},
 		{"serve", "preview the rendered roadmap locally", notImplemented("serve")},
 		{"version", "print the beadline version", runVersion},
@@ -84,6 +85,29 @@ func version() string {
 		return info.Main.Version
 	}
 	return "dev"
+}
+
+// commit is the VCS revision the binary was built from, with "-dirty" for
+// uncommitted changes; empty when the build did not record one.
+func commit() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	var rev string
+	dirty := false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev != "" && dirty {
+		rev += "-dirty"
+	}
+	return rev
 }
 
 func notImplemented(name string) func([]string, io.Writer, io.Writer) int {
