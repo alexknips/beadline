@@ -117,8 +117,8 @@ This implements ADR-2 §1 in `internal/estimate` and `internal/dist`.
   - 5 or more closes of its repo fall in the same minute.
   - The bead closed less than a minute after its creation.
 
-  `beadline forecast` prints the counts: learned from N delivered closes (M with a start) and K open
-  beads, left out so many for each reason.
+  `beadline --explain ID` and `beadline forecast` print the counts: learned from N delivered closes
+  (M with a start) and K open beads, left out so many for each reason.
 - **Draws.** Every open bead's draw is conditioned on its age (`dist.SampleBeyond`).
   - A bead in progress draws the rest of its cycle time since `started_at`, or the rest of its lead
     time since `ready_at` when the start is unknown.
@@ -129,8 +129,9 @@ This implements ADR-2 §1 in `internal/estimate` and `internal/dist`.
 - **Wait and work.** A bead not started splits its lead-time draw into work and a wait. The work is a
   cycle-time draw, at most the whole lead time; the wait is the rest. With no agent limit the split
   changes nothing: the bead closes after its lead time. With a configured limit only the work holds
-  an agent. A measured concurrency sets no limit (ADR-2 §1), and it is printed as "no limit (peak
-  n)".
+  an agent. A measured concurrency sets no limit (ADR-2 §1). It is still shown, as the peak:
+  roadmap.json's `concurrency` of a repo, "up to n agents at once (measured, not a limit)" in
+  `--explain`, and "no limit (peak n)" in `beadline forecast`.
 - **Unchanged.** The write-back still records the class cycle time's P50 and P80. A ready human gate
   draws the rest of its lag in the same way, Lindy fallback included.
 
@@ -311,7 +312,7 @@ beads that actually closed, so it records exactly what went in.
   field, or changing what one means, bumps it. A reader ignores unknown fields and rejects a newer
   version instead of misreading it.
 - **Provenance.** It records `generated_at` (the run's "now", UTC), `beadline_version` and
-  `model_version` (the forecasting model revision, such as `adr-1`, and absent when nothing was
+  `model_version` (the forecasting model revision, such as `adr-2`, and absent when nothing was
   forecast). It also records `config`, beadline.toml as used with defaults filled in, seed included.
   `inputs.exports[]` gives each export's repo, path, SHA-256 and size, with `live` when it was read
   with `bd export` from a repository directory, and `inputs.fingerprint` hashes those in config
@@ -346,8 +347,8 @@ beads that actually closed, so it records exactly what went in.
     agent time and time waiting on human gates. They also carry the inputs shown with the dates,
     `rate_per_day` and `concurrency`, and `critical_chain[]`. `quantile_hours` is the finish as a
     quantile grid in hours after `generated_at`, keyed `p05` … `p99` as in `beadline.snapshot/v1`
-    (ADR-2 §6, bl-ya5.12). It is what calibration scores with the PIT and the CRPS. Every forecast
-    carries the grid (`forecast.Item.GridHours`).
+    (ADR-2 §6, bl-ya5.12). It is what calibration scores with the PIT and the CRPS.
+    `Roadmap.SetForecast` copies it from the forecast (`forecast.Item.GridHours`).
   - **`schedule`** compares the forecast with `target_due_at` (the bead's `due_at`). It is `on_track`
     when P80 falls on or before the target, `at_risk` when only P50 does, and `late` when P50 falls
     after it or the target has passed. It is absent when there is no target, or no forecast yet to

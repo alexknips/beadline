@@ -21,8 +21,8 @@ import (
 )
 
 // modelVersion names the forecasting model revision recorded in
-// roadmap.json (docs/design.md: ADR-1 until bl-ya5.12 lands ADR-2).
-const modelVersion = "adr-1"
+// roadmap.json and in snapshots.
+const modelVersion = forecast.ModelVersion
 
 const rootFlagsHelp = `Flags:
   -o, --out DIR|FILE   where to write roadmap.html and roadmap.json (default .);
@@ -149,9 +149,6 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 	// A snapshot must hold every repo, and must not be dated before the
 	// data it was made from.
 	record := !*noRecord && *asOf == "" && failed == 0
-	if record {
-		in.options.Grid = calibrate.Levels
-	}
 	res, err := forecast.Run(g, in.options)
 	if err != nil {
 		fmt.Fprintf(stderr, "beadline: %v\n", err)
@@ -161,6 +158,13 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 	r.BeadlineVersion, r.ModelVersion = version(), modelVersion
 	r.SetInputs(l.exports)
 	r.SetForecast(res, g)
+	for n := range r.Repos {
+		// A measured agent count sets no limit, but it is shown.
+		if peak, ok := in.measured[r.Repos[n].Name]; ok {
+			c := float64(peak)
+			r.Repos[n].Concurrency = &c
+		}
+	}
 	r.Hide(cfg.Hide)
 	if rewind.IsZero() {
 		r.Calibration = trackRecord(snapshotDir(cfg, ""), g, l.horizon)
@@ -511,10 +515,16 @@ func explainItem(w io.Writer, id string, r *roadmap.Roadmap, g *graph.Graph, in 
 	}
 	for _, rp := range r.Repos {
 		if repos[rp.Name] && rp.Concurrency != nil && rp.RatePerDay != nil {
-			fmt.Fprintf(w, "Repo %s: %.0f agents (%s), %.2f beads closed a day over the last %d days.\n",
-				rp.Name, *rp.Concurrency, rp.ConcurrencySource, *rp.RatePerDay, r.Config.Model.WindowDays)
+			n := plural(int(*rp.Concurrency), "agent")
+			agents := n + " (configured)"
+			if rp.ConcurrencySource == "measured" {
+				agents = "up to " + n + " at once (measured, not a limit)"
+			}
+			fmt.Fprintf(w, "Repo %s: %s, %.2f beads closed a day over the last %d days.\n",
+				rp.Name, agents, *rp.RatePerDay, r.Config.Model.WindowDays)
 		}
 	}
+	fmt.Fprintf(w, "Durations %s.\n", learnedFrom(in.model.Sample()))
 	if len(o.CriticalChain) > 0 {
 		fmt.Fprintln(w, "\nCritical chain (it sets the 80% date; each bead waits for the one before):")
 		for _, cid := range o.CriticalChain {
@@ -568,11 +578,10 @@ func beadLine(i *graph.Issue, in *inputs) string {
 	case i.HighLevel || len(i.Children) > 0:
 		return line + "  done when its work is"
 	}
-	e := in.model.Estimate(bead(i))
-	left := e.Remaining
-	if !e.Started {
-		return line + fmt.Sprintf("  about %s once picked up (80%%: %s), after a wait of about %s",
-			span(left.P50), span(left.P80), span(e.Queue.P50))
+	b := in.bead(i)
+	left := in.model.Estimate(b).Remaining
+	if b.Blocked && i.Status != graph.StatusInProgress {
+		return line + fmt.Sprintf("  about %s once its blockers close (80%%: %s)", span(left.P50), span(left.P80))
 	}
 	return line + fmt.Sprintf("  about %s to go (80%%: %s)", span(left.P50), span(left.P80))
 }

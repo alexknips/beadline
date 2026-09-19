@@ -1,6 +1,8 @@
 package roadmap
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/alexknips/beadline/internal/forecast"
@@ -25,7 +27,7 @@ func (r *Roadmap) SetForecast(res *forecast.Result, g *graph.Graph) {
 	for _, items := range [][]forecast.Item{res.Items, res.Goals} {
 		for _, it := range items {
 			if o := outlooks[it.ID]; o != nil {
-				o.setForecast(it)
+				o.setForecast(it, res.Grid)
 			}
 		}
 	}
@@ -43,13 +45,14 @@ func (r *Roadmap) SetForecast(res *forecast.Result, g *graph.Graph) {
 	r.Assess()
 }
 
-func (o *Outlook) setForecast(it forecast.Item) {
+func (o *Outlook) setForecast(it forecast.Item, levels []float64) {
 	for _, s := range Statuses {
 		if string(it.Status) == s {
 			o.Status = s
 		}
 	}
 	o.P50, o.P80, o.P95, o.AgentHours, o.HumanHours, o.CriticalChain = nil, nil, nil, nil, nil, nil
+	o.QuantileHours = nil
 	if it.P50 == nil || it.P80 == nil || it.P95 == nil {
 		return
 	}
@@ -57,6 +60,12 @@ func (o *Outlook) setForecast(it forecast.Item) {
 	agent, human := it.P50.AgentHours, it.P50.HumanHours
 	o.AgentHours, o.HumanHours = &agent, &human
 	o.CriticalChain = it.CriticalChain
+	if len(it.GridHours) == len(levels) && len(levels) > 0 {
+		o.QuantileHours = make(map[string]float64, len(levels))
+		for n, q := range levels {
+			o.QuantileHours[fmt.Sprintf("p%02d", int(math.Round(q*100)))] = it.GridHours[n]
+		}
+	}
 }
 
 // pace is each repo's work beads closed per day over the window, rounded to

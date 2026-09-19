@@ -78,8 +78,17 @@ func TestRootWritesTheRoadmap(t *testing.T) {
 		m1.AgentHours == nil || len(m1.CriticalChain) == 0 || m1.Schedule == "" {
 		t.Fatalf("api-m1 = %+v", m1)
 	}
+	if g := m1.QuantileHours; len(g) != 14 || !(g["p05"] <= g["p50"] && g["p50"] <= g["p99"]) {
+		t.Errorf("api-m1 quantile_hours = %v, want the p05 to p99 grid", g)
+	}
 	if got := r.Repos[0]; got.Name != "api" || got.Concurrency == nil || *got.Concurrency != 3 || got.RatePerDay == nil {
 		t.Errorf("repo api = %+v", got)
+	}
+	// web is measured: its peak is shown, though it sets no limit.
+	for _, got := range r.Repos {
+		if got.Name == "web" && (got.Concurrency == nil || *got.Concurrency != 1 || got.ConcurrencySource != "measured") {
+			t.Errorf("repo web = %+v", got)
+		}
 	}
 	if want := []string{"agents.api = 3", "agents.hq = 1", "runs = 300"}; !reflect.DeepEqual(r.Config.Settings, want) {
 		t.Errorf("settings = %v, want %v", r.Config.Settings, want)
@@ -124,6 +133,7 @@ func TestRootExplain(t *testing.T) {
 	for _, want := range []string{
 		"api-m1 · Public API v1 (milestone in api)\nplan for 2026-",
 		"Work: 4 of 6 beads left", "1 bead of them wait", "The median run takes",
+		"Repo api: up to 1 agent at once (measured, not a limit)", "Durations learned from 3 delivered closes",
 		"Critical chain (it sets the 80% date", "Work left:\n  api-3  ",
 		"api-5  HUMAN: ", "waits on a person",
 	} {

@@ -174,6 +174,11 @@ type inputs struct {
 	options forecast.Options
 	model   *estimate.Model
 	open    []estimate.Bead // open work beads, for the write-back
+	// beads are the work beads as the estimator sees them, ready_at
+	// included, by ID; readiness tells it for other beads.
+	beads     map[string]estimate.Bead
+	readiness *forecast.Readiness
+	now       time.Time
 	// measured holds the peak concurrency of the repositories set to
 	// "measure". It is shown, not simulated: measured lead times already
 	// hold the wait for a free agent (ADR-2 §1).
@@ -190,18 +195,16 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 	// Lead times run from ready_at: for a closed bead as of its close, for
 	// an open one as of now.
 	var work []estimate.Bead
-	byID := map[string]estimate.Bead{}
-	readiness := forecast.NewReadiness(g)
-	in := &inputs{measured: map[string]int{}}
+	in := &inputs{measured: map[string]int{}, beads: map[string]estimate.Bead{}, readiness: forecast.NewReadiness(g), now: now}
 	for _, i := range forecast.WorkBeads(g) {
 		b := bead(i)
 		asOf := now
 		if i.Closed() && !i.ClosedAt.IsZero() {
 			asOf = i.ClosedAt
 		}
-		b.ReadyAt, b.Blocked = readiness.At(i, asOf)
+		b.ReadyAt, b.Blocked = in.readiness.At(i, asOf)
 		work = append(work, b)
-		byID[b.ID] = b
+		in.beads[b.ID] = b
 		if !i.Closed() {
 			in.open = append(in.open, b)
 		}
@@ -248,21 +251,25 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 		Runs:        m.Simulations,
 		Seed:        m.Seed,
 		Concurrency: concurrency,
-		Agent: func(i *graph.Issue) forecast.Sampler {
-			b, ok := byID[i.ID]
-			if !ok {
-				b = bead(i)
-				b.ReadyAt, b.Blocked = readiness.At(i, now)
-			}
-			return model.Sampler(b)
-		},
-		Human:   forecast.HumanLag(lags, m.HumanGateHoursPrior*60, m.PoolingStrength, m.TailCapFactor),
-		Outside: outside,
+		Agent:       func(i *graph.Issue) forecast.Sampler { return model.Sampler(in.bead(i)) },
+		Human:       forecast.HumanLag(lags, m.HumanGateHoursPrior*60, m.PoolingStrength, m.TailCapFactor),
+		Outside:     outside,
 		// Every dated item carries its quantile grid, p05 to p99: the one
 		// snapshots record and calibration scores.
 		Grid: calibrate.Levels,
 	}
 	return in, nil
+}
+
+// bead returns the estimator's view of an issue as of the forecast's now,
+// when it became ready included.
+func (in *inputs) bead(i *graph.Issue) estimate.Bead {
+	if b, ok := in.beads[i.ID]; ok {
+		return b
+	}
+	b := bead(i)
+	b.ReadyAt, b.Blocked = in.readiness.At(i, in.now)
+	return b
 }
 
 // bead is what the estimator needs to know about an issue, but for when it
