@@ -175,9 +175,12 @@ beads that actually closed, so it records exactly what went in.
   A bead that a goal label names appears as that goal instead. **`goals[]`** holds every goal named
   by a label, with its bead's title when that bead is loaded and `members[]`, its labelled high-level
   beads. Both share these fields:
-  - **Scope** (`graph.Scope`) covers the parent-child descendants, open or closed, plus every open
-    blocker of the bead or of open work in scope, transitively, with that blocker's open
-    descendants. Closed blockers are satisfied and are left out. A goal's scope is the union over
+  - **Scope** (`graph.Scope`) covers the parent-child descendants, open or closed, plus every
+    blocker of the bead or of open work in scope, transitively, open or closed, with that blocker's
+    descendants. Blocking edges are followed only from open beads, because what a closed bead
+    waited on is history. The open beads in scope are therefore exactly the work still to land.
+    On the town's exports this counts 17 beads for hivemind-m306, which has 8 children, and 3 for
+    M6 (hivemind-zdsh), which has 1 child and two closed blockers. A goal's scope is the union over
     its labelled beads. `total = done + remaining`, and `done_pct` is `100 × done / total`.
     `remaining_ids[]` is the exact open set the forecast covers, so calibration can tell a late
     finish from scope that grew. `human_gates` counts the remaining gates. `waits_on_unloaded[]`

@@ -6,11 +6,12 @@ import (
 )
 
 func TestScope(t *testing.T) {
-	// m has one child e; e has children t1 (closed) and t2. The real work
-	// hangs off blocking edges, as with a milestone whose epics live
-	// elsewhere: m waits on b1, t2 waits on b2 (closed, so satisfied) and
-	// on x, an epic under another parent with children x1 (open) and x2
-	// (closed). x1 in turn waits on y. u is unrelated.
+	// m has one child e; e has children t1 (closed) and t2. The rest of the
+	// work hangs off blocking edges, as with a milestone whose epics live
+	// elsewhere: m waits on b1, t2 waits on b2 (already closed: done work)
+	// and on x, an epic under another parent with children x1 (open) and x2
+	// (closed). x1 in turn waits on y. t1 is closed, so what it waited on
+	// (u) is history.
 	g := build(t,
 		[]string{"m", "e", "t1:closed", "t2", "b1", "b2:closed", "p", "x", "x1", "x2:closed", "y", "u"},
 		[][3]string{
@@ -20,7 +21,7 @@ func TestScope(t *testing.T) {
 			{"blocks", "x1", "y"},
 			{"blocks", "t1", "u"}, // a closed bead's blockers are history
 		})
-	want := []string{"b1", "e", "t1", "t2", "x", "x1", "y"}
+	want := []string{"b1", "b2", "e", "t1", "t2", "x", "x1", "x2", "y"}
 	if got := idsOf(g.Scope("m")); !reflect.DeepEqual(got, want) {
 		t.Errorf("Scope(m) = %v, want %v", got, want)
 	}
@@ -44,7 +45,7 @@ func TestScopeCycles(t *testing.T) {
 }
 
 func TestScopeClosedRoot(t *testing.T) {
-	// A closed issue keeps its breakdown but no longer waits on anything.
+	// A closed issue keeps its breakdown; what it waited on is history.
 	g := build(t, []string{"m:closed", "a:closed", "b"}, [][3]string{
 		{"parent-child", "a", "m"}, {"blocks", "m", "b"},
 	})

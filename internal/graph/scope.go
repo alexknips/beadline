@@ -2,17 +2,19 @@ package graph
 
 import "sort"
 
-// Scope returns the work a high-level issue waits on, without the issue
+// Scope returns the work a high-level issue stands for, without the issue
 // itself, sorted by ID:
 //
-//   - every descendant through parent-child edges, open or closed: the
-//     issue's own breakdown, which is what "done %" counts against;
-//   - every open blocker of the issue or of an open issue already in scope,
-//     transitively, together with that blocker's open descendants: upstream
-//     work that must land first even though it hangs off another parent.
+//   - its descendants through parent-child edges, open or closed: its own
+//     breakdown;
+//   - every blocker of the issue or of open work in scope, transitively, open
+//     or closed, with the blocker's own descendants: upstream work it needed
+//     or still waits on, although that work hangs off another parent.
 //
-// Closed blockers are satisfied, so they are not part of the remaining work
-// and are left out. Cycles do not make it loop.
+// Blocking edges are followed only from open issues: what a closed issue
+// waited on is history, not part of this issue's work. So the open issues in
+// scope are exactly the work that still has to land. Cycles do not make it
+// loop.
 func (g *Graph) Scope(id string) []*Issue {
 	root := g.issues[id]
 	if root == nil {
@@ -39,15 +41,12 @@ func (g *Graph) Scope(id string) []*Issue {
 		i := queue[0]
 		queue = queue[1:]
 		for _, b := range i.BlockedBy {
-			blocker := g.issues[b]
-			if blocker.Closed() || in[b] {
+			if in[b] {
 				continue
 			}
-			add(blocker)
+			add(g.issues[b])
 			for _, d := range g.Descendants(b) {
-				if !d.Closed() {
-					add(d)
-				}
+				add(d)
 			}
 		}
 	}
