@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1 (unreleased)
+## v0.1 — 2026-09-20
 
 The whole surface: one command, `beadline [DIR|FILE...]`, plus `check` and `doctor`. Reads one or more
 beads repos live (or their `bd export` files), learns lead times per class from your closed and open
