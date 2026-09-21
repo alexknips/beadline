@@ -147,7 +147,8 @@ func parseExports(cfg *config.Config, exports []load.Export, asOf time.Time, std
 			if err != nil {
 				return nil, failed, err
 			}
-			return &loaded{graph: g, report: rep, exports: exports, horizon: ex.Horizon()}, failed, nil
+			return &loaded{graph: g, report: rep, exports: exports, horizon: ex.Horizon(),
+				activity: ex.ActivityTimestamps(asOf)}, failed, nil
 		}
 		// Find the export at fault: the error names its source.
 		bad := -1

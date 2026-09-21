@@ -109,12 +109,16 @@ func runForecast(args []string, stdout, stderr io.Writer) int {
 			return fail(e.Err)
 		}
 	}
-	g, rep, err := load.FromExports(&cfg.Conventions, exports)
+	ex, err := load.ParseExports(exports)
+	if err != nil {
+		return fail(err)
+	}
+	g, rep, err := ex.Graph(&cfg.Conventions, time.Time{})
 	if err != nil {
 		return fail(err)
 	}
 	inputs := roadmap.InputsOf(exports)
-	in, err := forecastInputs(cfg, g, rep, now)
+	in, err := forecastInputs(cfg, g, rep, now, ex.ActivityTimestamps(time.Time{}))
 	if err != nil {
 		return fail(err)
 	}
@@ -184,18 +188,34 @@ type inputs struct {
 	// hold the wait for a free agent (ADR-2 §1).
 	measured map[string]int
 	gates    int // closed gates the human-gate lag was learned from
+	// idle summarizes the idle-time mask this forecast learned net of, for
+	// roadmap.json (ADR-3).
+	idle *roadmap.Idle
 }
 
-func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now time.Time) (*inputs, error) {
+// forecastInputs learns the model and assembles the forecaster's options.
+// activity is the cross-repo timeline idle.Infer masks gaps from
+// (load.Exports.ActivityTimestamps, as of the same now); nil masks nothing
+// beyond any declared windows.
+func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now time.Time, activity []time.Time) (*inputs, error) {
 	m := cfg.Model
 	window := time.Duration(m.WindowDays) * 24 * time.Hour
+	since := now.AddDate(0, 0, -m.WindowDays)
+
+	mask := idleMask(cfg.Idle, activity, now)
+	avail := availability(mask, since, now)
+	dateFrom := now
+	if mask.CurrentlyIdle() && cfg.Idle.ResumeAt.After(now) {
+		dateFrom = cfg.Idle.ResumeAt
+	}
 
 	// Agent durations are learned from work beads only: gates wait on
 	// people, containers span other beads' work, goal beads coordinate.
 	// Lead times run from ready_at: for a closed bead as of its close, for
 	// an open one as of now.
 	var work []estimate.Bead
-	in := &inputs{measured: map[string]int{}, beads: map[string]estimate.Bead{}, readiness: forecast.NewReadiness(g), now: now}
+	in := &inputs{measured: map[string]int{}, beads: map[string]estimate.Bead{}, readiness: forecast.NewReadiness(g), now: now,
+		idle: idleSummary(cfg.Idle, mask, since, now, avail)}
 	for _, i := range forecast.WorkBeads(g) {
 		b := bead(i)
 		asOf := now
@@ -217,6 +237,7 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 		CyclePriorMinutes: m.CycleMinutesPrior,
 		PoolingStrength:   m.PoolingStrength,
 		TailCapFactor:     m.TailCapFactor,
+		Active:            mask.Active,
 	})
 	if err != nil {
 		return nil, err
@@ -257,6 +278,12 @@ func forecastInputs(cfg *config.Config, g *graph.Graph, rep *load.Report, now ti
 		// Every dated item carries its quantile grid, p05 to p99: the one
 		// snapshots record and calibration scores.
 		Grid: calibrate.Levels,
+		// ADR-3: dates count from a declared resume when the data shows the
+		// city idle right now, and durations (already learned net of idle
+		// time) are stretched back to calendar time by the measured duty
+		// cycle.
+		DateFrom:     dateFrom,
+		Availability: avail,
 	}
 	return in, nil
 }

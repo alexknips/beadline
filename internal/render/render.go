@@ -84,6 +84,7 @@ type view struct {
 	Summary        []chip
 	Calibration    string
 	Settings       string // the non-default settings, for the footer
+	IdleWindows    string // the declared idle windows, for the footer; "" when none
 	Timeline       timeline
 	Groups         []group
 	Repos          []string
@@ -150,6 +151,8 @@ func newView(r *roadmap.Roadmap, opts Options) *view {
 	if fp := strings.TrimPrefix(r.Inputs.Fingerprint, "sha256:"); len(fp) >= 12 {
 		v.Facts = append(v.Facts, "inputs "+fp[:12])
 	}
+	v.Facts = append(v.Facts, idleFacts(r.Idle)...)
+	v.IdleWindows = idleWindowsText(r.Idle)
 
 	v.summary()
 	v.Calibration = "Track record: no graded forecasts yet."
@@ -397,6 +400,47 @@ func hours(h *float64) string {
 // num formats a number with at most one decimal.
 func num(f float64) string {
 	return strconv.FormatFloat(math.Round(f*10)/10, 'f', -1, 64)
+}
+
+// idleFacts summarizes the idle-time mask (ADR-3) for the header facts
+// line, so the correction is visible rather than a silent change to the
+// dates. Nothing is shown when nothing was masked and the city is not
+// currently idle.
+func idleFacts(idl *roadmap.Idle) []string {
+	if idl == nil || (idl.TotalHours == 0 && !idl.CurrentlyIdle && len(idl.Declared) == 0) {
+		return nil
+	}
+	var out []string
+	if idl.TotalHours > 0 {
+		out = append(out, fmt.Sprintf("idle %s masked (G=%gh)", plural(idl.TotalHours, "hour"), idl.GapHours))
+	}
+	switch {
+	case idl.CurrentlyIdle && idl.ResumeAt != nil:
+		out = append(out, "idle now, resumes "+date(idl.ResumeAt))
+	case idl.CurrentlyIdle:
+		out = append(out, "idle now")
+	}
+	return out
+}
+
+// idleWindowsText lists the declared idle windows (expert.idle) for the
+// footer, "" when there are none (ADR-3, "never silent").
+func idleWindowsText(idl *roadmap.Idle) string {
+	if idl == nil || len(idl.Declared) == 0 {
+		return ""
+	}
+	parts := make([]string, len(idl.Declared))
+	for i, w := range idl.Declared {
+		end := "now"
+		if w.End != nil {
+			end = date(w.End)
+		}
+		parts[i] = fmt.Sprintf("%s–%s", date(&w.Start), end)
+		if w.Note != "" {
+			parts[i] += " (" + w.Note + ")"
+		}
+	}
+	return "Declared idle: " + strings.Join(parts, " · ") + "."
 }
 
 func plural(n float64, noun string) string {

@@ -123,7 +123,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		fc := func(g *graph.Graph, lr *load.Report, asOf time.Time) (*forecast.Result, error) {
-			in, err := forecastInputs(cfg, g, lr, asOf)
+			// The activity timeline is rewound to the same asOf as g and lr
+			// (ex.Graph), so idle inference at each origin sees only what
+			// that origin could have known (ADR-3 §3).
+			in, err := forecastInputs(cfg, g, lr, asOf, ex.ActivityTimestamps(asOf))
 			if err != nil {
 				return nil, err
 			}

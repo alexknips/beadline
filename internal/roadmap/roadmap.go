@@ -60,6 +60,42 @@ type Roadmap struct {
 	Goals        []Goal       `json:"goals"`
 	Milestones   []Milestone  `json:"milestones"` // every high-level type, not only milestones
 	Calibration  *Calibration `json:"calibration,omitempty"`
+	// Idle reports the idle-time mask a forecast run used (docs/design.md,
+	// ADR-3), so the correction is visible rather than a silent change to
+	// the dates. Absent when nothing was forecast.
+	Idle *Idle `json:"idle,omitempty"`
+}
+
+// Idle is what beadline masked out as time nothing ran (ADR-3), and what it
+// assumed about calendar availability going forward.
+type Idle struct {
+	// GapHours is G: expert.idle_gap_hours as used.
+	GapHours float64 `json:"gap_hours"`
+	// TotalHours is the idle hours the mask covers within the model window
+	// (Now − window_days, Now]: declared and inferred windows combined,
+	// merged where they overlap.
+	TotalHours float64 `json:"total_hours"`
+	// Availability is the measured duty cycle (active hours over calendar
+	// hours in the model window) used to turn simulated durations back
+	// into calendar time (ADR-3 §1). 1 when nothing is masked.
+	Availability float64 `json:"availability"`
+	// CurrentlyIdle reports whether the mask's latest window reaches
+	// GeneratedAt: the data shows the city idle as of this run.
+	CurrentlyIdle bool `json:"currently_idle,omitempty"`
+	// ResumeAt is expert.idle_resume_at when CurrentlyIdle and it is in the
+	// future: dates are then counted from here, not from GeneratedAt
+	// (ADR-3 §2).
+	ResumeAt *time.Time `json:"resume_at,omitempty"`
+	// Declared are the configured idle windows (expert.idle) that fall
+	// within the model window, as configured (not merged with inference).
+	Declared []IdleWindow `json:"declared,omitempty"`
+}
+
+// IdleWindow is one masked interval.
+type IdleWindow struct {
+	Start time.Time  `json:"start"`
+	End   *time.Time `json:"end,omitempty"` // absent: still idle as of GeneratedAt
+	Note  string     `json:"note,omitempty"`
 }
 
 // Config echoes the configuration as the run used it, defaults filled in.
@@ -293,6 +329,23 @@ func (r *Roadmap) Validate() error {
 		}
 		repos[rp.Name] = true
 	}
+	if idl := r.Idle; idl != nil {
+		if idl.GapHours < 0 {
+			errs = append(errs, fmt.Errorf("idle: gap_hours must not be negative, got %v", idl.GapHours))
+		}
+		if idl.TotalHours < 0 {
+			errs = append(errs, fmt.Errorf("idle: total_hours must not be negative, got %v", idl.TotalHours))
+		}
+		if !(idl.Availability > 0) || idl.Availability > 1 {
+			errs = append(errs, fmt.Errorf("idle: availability must be in (0, 1], got %v", idl.Availability))
+		}
+		for i, w := range idl.Declared {
+			if w.End != nil && !w.End.After(w.Start) {
+				errs = append(errs, fmt.Errorf("idle.declared[%d]: end must be after start", i))
+			}
+		}
+	}
+
 	seen := map[string]bool{}
 	for _, m := range r.Milestones {
 		where := "milestone " + m.ID

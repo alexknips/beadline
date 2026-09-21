@@ -55,6 +55,9 @@ type loaded struct {
 	report  *load.Report
 	exports []load.Export
 	horizon time.Time // the latest moment the exports know about
+	// activity is the cross-repo activity timeline as of the same asOf the
+	// graph was rewound to: idle.Infer's input (docs/design.md, ADR-3).
+	activity []time.Time
 }
 
 // runRoot is the one command: read the repos, forecast, write roadmap.json
@@ -141,7 +144,7 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 		return usageError(stderr, "", "--explain: %s is not a bead or goal in the loaded repos", *explain)
 	}
 
-	in, err := forecastInputs(cfg, g, l.report, now)
+	in, err := forecastInputs(cfg, g, l.report, now, l.activity)
 	if err != nil {
 		fmt.Fprintf(stderr, "beadline: %v\n", err)
 		return ExitFailure
@@ -158,6 +161,7 @@ func runRoot(args []string, stdout, stderr io.Writer) int {
 	r.BeadlineVersion, r.ModelVersion = version(), modelVersion
 	r.SetInputs(l.exports)
 	r.SetForecast(res, g)
+	r.Idle = in.idle
 	for n := range r.Repos {
 		// A measured agent count sets no limit, but it is shown.
 		if peak, ok := in.measured[r.Repos[n].Name]; ok {

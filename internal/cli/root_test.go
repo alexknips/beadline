@@ -428,7 +428,7 @@ func TestTrackRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in, err := forecastInputs(cfg, then, rep, asOf)
+	in, err := forecastInputs(cfg, then, rep, asOf, ex.ActivityTimestamps(asOf))
 	if err != nil {
 		t.Fatal(err)
 	}

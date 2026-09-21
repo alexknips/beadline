@@ -251,6 +251,40 @@ func TestPageContent(t *testing.T) {
 	}
 }
 
+// ADR-3: masked idle hours, declared windows and a currently-idle warning
+// must show on the page, never silently.
+func TestIdleFacts(t *testing.T) {
+	r := built(t)
+	resume := now.Add(6 * time.Hour)
+	r.Idle = &roadmap.Idle{
+		GapHours: 24, TotalHours: 30.5, Availability: 0.82, CurrentlyIdle: true, ResumeAt: &resume,
+		Declared: []roadmap.IdleWindow{
+			{Start: now.Add(-72 * time.Hour), End: timePtr(now.Add(-48 * time.Hour)), Note: "host migration"},
+			{Start: now.Add(-6 * time.Hour)}, // still open: no End
+		},
+	}
+	page := renderString(t, r)
+	for _, want := range []string{
+		"idle 30.5 hours masked (G=24h)",
+		"idle now, resumes " + resume.Format("2006-01-02"),
+		"Declared idle: ",
+		"(host migration)",
+		"–now", // the open window's end
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+
+	// Nothing masked and not currently idle: no idle text at all.
+	plain := renderString(t, built(t))
+	if strings.Contains(plain, "idle") {
+		t.Error("page without an Idle field mentions idle")
+	}
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
+
 func TestFailedRepo(t *testing.T) {
 	r := built(t)
 	// A repo that could not be read has no beads.
