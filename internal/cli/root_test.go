@@ -412,6 +412,66 @@ func TestRootAsOfRewindsTheData(t *testing.T) {
 	}
 }
 
+// ADR-3, end to end: a declared idle window shows up on roadmap.json,
+// unmasked by default, and disabling inference (idle_gap_hours = 0) makes
+// the masked total exactly the declared window's overlap with the model
+// window.
+func TestRootIdleMask(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "beadline.toml")
+	doc := `[expert]
+idle_gap_hours = 0
+idle_resume_at = 2026-09-10T00:00:00Z
+idle = [
+  { start = 2026-07-25T00:00:00Z, end = 2026-07-28T00:00:00Z, note = "test window" },
+]
+`
+	if err := os.WriteFile(cfgPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	code, _, stderr := run(fixtures+"api.jsonl", fixtures+"web.jsonl", fixtures+"hq.jsonl",
+		"--config", cfgPath, "-o", out, "--as-of", "2026-09-03T12:00:00Z", "--runs", "50", "-q")
+	if code != ExitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	r := readRoadmap(t, filepath.Join(out, "roadmap.json"))
+	if r.Idle == nil {
+		t.Fatal("roadmap.json has no idle report")
+	}
+	if r.Idle.GapHours != 0 {
+		t.Errorf("gap_hours = %v, want 0 (inference disabled)", r.Idle.GapHours)
+	}
+	if r.Idle.TotalHours != 72 {
+		t.Errorf("total_hours = %v, want exactly the declared window's 72h (inference disabled)", r.Idle.TotalHours)
+	}
+	if len(r.Idle.Declared) != 1 || r.Idle.Declared[0].Note != "test window" {
+		t.Errorf("declared = %+v, want the one configured window", r.Idle.Declared)
+	}
+	// --as-of is before idle_resume_at and the declared window is long past:
+	// the data is not idle as of the forecast's now.
+	if r.Idle.CurrentlyIdle {
+		t.Error("currently_idle = true, want false: the forecast's now is not inside any idle window")
+	}
+
+	// Without any idle config, the roadmap still carries an Idle report, at
+	// the default gap_hours, with nothing declared. This fixture's activity
+	// is itself sparse over weeks, so the default's inference masks real
+	// gaps in it too (availability < 1) — expected of a cross-repo signal
+	// applied to a small, sparse fixture, not a defect.
+	plainOut := filepath.Join(dir, "plain")
+	code, _, stderr = run(fixtures+"api.jsonl", fixtures+"web.jsonl", fixtures+"hq.jsonl",
+		"-o", plainOut, "--as-of", "2026-09-03T12:00:00Z", "--runs", "50", "-q")
+	if code != ExitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	plain := readRoadmap(t, filepath.Join(plainOut, "roadmap.json"))
+	wantGap := config.Default().Idle.GapHours
+	if plain.Idle == nil || plain.Idle.GapHours != wantGap || len(plain.Idle.Declared) != 0 {
+		t.Errorf("idle = %+v, want gap_hours %v and no declared windows", plain.Idle, wantGap)
+	}
+}
+
 func TestTrackRecord(t *testing.T) {
 	cfg, err := config.Load(writeHistory(t))
 	if err != nil {
