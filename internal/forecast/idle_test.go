@@ -76,7 +76,7 @@ func TestDateFromZeroIsNow(t *testing.T) {
 func TestGridHoursAndOnTimeCountFromNow(t *testing.T) {
 	g := newGraph(t, []*graph.Issue{{ID: "m", HighLevel: true}, {ID: "a"}}, child("a", "m"))
 	o := options(fixed{w: 120}, 0)
-	o.Availability = 0.5    // 120 / 0.5 = 240 minutes of work
+	o.Availability = 0.5            // 120 / 0.5 = 240 minutes of work
 	o.DateFrom = now.Add(time.Hour) // +60 minutes before work starts
 	due := now.Add(6 * time.Hour)   // 360 minutes: after the 300-minute finish
 	o.Grid = []float64{0.5}

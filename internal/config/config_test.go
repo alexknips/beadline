@@ -170,8 +170,11 @@ func TestDefaultIdleGapHours(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Idle.GapHours != 24 {
-		t.Errorf("default idle_gap_hours = %v, want 24 (ADR-3)", c.Idle.GapHours)
+	// Inference is off by default: the release-gate backtest found no gap
+	// threshold that both held calibration and helped the target case
+	// (ADR-3, "open question"). Declared windows still work unmasked.
+	if c.Idle.GapHours != 0 {
+		t.Errorf("default idle_gap_hours = %v, want 0 (ADR-3)", c.Idle.GapHours)
 	}
 	if got := c.NonDefault(); got != nil {
 		t.Errorf("NonDefault = %v, want none for the default idle settings", got)

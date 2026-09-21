@@ -149,7 +149,7 @@ func TestMaskClipsToHorizonNoLeakage(t *testing.T) {
 	// (ADR-3 §3).
 	horizon := day(10)
 	m := New(horizon,
-		[]Window{{Start: day(15), End: day(16)}}, // entirely after horizon
+		[]Window{{Start: day(15), End: day(16)}},  // entirely after horizon
 		[]Declared{{Start: day(8), End: day(20)}}, // starts before, reaches past
 	)
 	ws := m.Windows()

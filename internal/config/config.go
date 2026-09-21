@@ -185,9 +185,14 @@ func Default() Config {
 			PoolingStrength:     10,
 			TailCapFactor:       3,
 		},
-		// 24h: a gap the whole loaded set of repos shares, not one quiet
-		// repo. ADR-3 picked it from the release-gate backtest.
-		Idle:   Idle{GapHours: 24},
+		// 0: inference off by default (ADR-3). The town's real activity is
+		// bursty enough that inferred idle time masks 30-70% of the model
+		// window; the release-gate backtest could not find a gap threshold
+		// where that held calibration AND moved a stuck item's date the
+		// right way at once. Declared windows (expert.idle) still work:
+		// they need no inference and are the recommended way to mask a
+		// specific known incident until ADR-3's open question is settled.
+		Idle:   Idle{GapHours: 0},
 		Agents: map[string]Concurrency{},
 	}
 	if err := c.Conventions.Compile(); err != nil {

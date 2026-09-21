@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+**Idle-time mask (bead `bl-dmd`).** `expert.idle` declares known idle windows (a host migration, a
+recorded pool suspension); they mask out of every learned duration and every open bead's age
+exactly, no inference needed. `expert.idle_gap_hours` can additionally infer idle time from a gap
+in the cross-repo activity timeline, but defaults to **0 (off)**: a real-data backtest of the five
+town repos found no gap threshold, under either calendar-mapping assumption, that both held the
+release gate and moved a stuck item's forecast the right way — the town's real activity is bursty
+enough (0.30-0.68 measured duty cycle) that a uniform stretch back to calendar time over- or
+under-corrects. `roadmap.json` always reports what was masked (`idle`), so a declared window's
+effect, or the fact that nothing was masked, is visible either way. Full evidence and the escalated
+decision are in [`docs/design.md`](docs/design.md#decisions--adr-3-bl-dmd) (ADR-3).
+
 ## v0.1 — 2026-09-20
 
 The whole surface: one command, `beadline [DIR|FILE...]`, plus `check` and `doctor`. Reads one or more

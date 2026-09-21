@@ -362,6 +362,15 @@ beads that actually closed, so it records exactly what went in.
   goal forecasts whose 80% outcome is known, and the coverages are the shares that held. It is
   absent before any outcome is known, and with `--as-of` (bl-ya5.11). The page and the summary show
   it as the track record, "80% dates held X of Y".
+- **`idle`** (ADR-3) reports the idle-time mask a forecast used, so the correction is visible
+  rather than a silent change to the dates: `gap_hours` (`expert.idle_gap_hours` as used),
+  `total_hours` (declared and inferred windows combined, within the model window),
+  `availability` (the measured duty cycle: 1 when nothing is masked), `currently_idle` and, when
+  that and `expert.idle_resume_at` are both set and in the future, `resume_at`. `declared` echoes
+  `expert.idle` exactly as configured (not merged with inference), each entry an object of `start`,
+  an optional `end` (absent: still idle) and an optional `note`. Present whenever a forecast ran.
+  The page shows `total_hours` and `currently_idle` in the header facts, and `declared` in the
+  footer, when either is non-empty.
 
 `roadmap.Build` fills everything the graph alone determines. `Roadmap.SetForecast` then copies the
 forecaster's status (which knows `stalled` and parked work), dates, split of the median run and
@@ -466,12 +475,20 @@ beadline help [COMMAND]
   cycle_minutes_prior = 60
   pooling_strength = 10
   tail_cap_factor = 3
+  idle_gap_hours = 0                # G: 0 disables inference (ADR-3, an open question)
+  idle_resume_at = 2026-09-22T00:00:00Z  # only used while currently idle; omit for none
+  idle = [
+    { start = 2026-09-05T00:00:00Z, end = 2026-09-09T00:00:00Z, note = "host migration" },
+    { start = 2026-09-15T00:00:00Z },     # no end: still idle as of the config
+  ]
   ```
-  The values shown for the expert keys are the defaults. They map onto the layout under Inputs:
+  The values shown for the expert keys are the defaults, `idle_resume_at` and `idle` excepted
+  (their default is none: no key at all). They map onto the layout under Inputs:
   `roadmap_types` is `high_level_types`, `goal_label` is `goal_label_pattern`, `human_gate.titles`,
   `.metadata` and `.hours_prior` are the gate patterns, keys and prior, `history_days` is
   `window_days`, `ignore_types` is `infra_types`, `runs` is `simulations`, and `agents` replaces
-  each repo's `concurrency`. An unknown key is an error that names the closest valid key ("unknown
+  each repo's `concurrency`. `idle_gap_hours`, `idle_resume_at` and `idle` are new (ADR-3) and have
+  no key under Inputs. An unknown key is an error that names the closest valid key ("unknown
   key expert.agent; did you mean expert.agents?"), or the new name of a key of the old layout; an
   old `[[repos]]` table says how to write `repos` now. `agents` for a repo that is not loaded is a
   warning, since the command line may load fewer repos than the file lists.
@@ -598,6 +615,7 @@ The same representation covers cycle time, queue latency and human-gate latency.
 | `internal/render` | single-file HTML (embedded template, CSS, JS) | bl-ya5.5 |
 | `internal/calibrate` | snapshots, forecast vs actual, coverage, backtest | bl-ya5.6 |
 | `internal/bvexec` | optional `bv` integration, through `os/exec` only | bl-ya5.7 |
+| `internal/idle` | idle-time mask: inferred gaps, declared windows | bl-dmd |
 
 - Everything lives under `internal/`, so v0.1 promises no Go API. The public contracts are the CLI,
   `beadline.toml` and `roadmap.json`.
@@ -816,3 +834,129 @@ The two studies disagree.
 - **Where they agree.** Stragglers that were closed by a decision cause the largest errors.
 
 ADR-2 adds no growth or wave model. Revisit after the live forward test is scored on 2026-10-03.
+
+## Decisions — ADR-3 (bl-dmd)
+Status: **Mechanism accepted; the calendar-mapping question (§1) escalated, not decided.** Source:
+Alex's request of 2026-09-21, relayed by hivemind-crew mail gc-wisp-ugmrbw: "the tail is too long
+given that the gas city was not doing anything for a while ... we need to do better." Evidence:
+hivemind-tenv's forecast (hivemind roadmap, 2026-09-21T00:57Z) had p50 = 1758h (2026-12-03) against
+~15 remaining beads and ~40 agent-hours by the crew's own split; the 45-day lead-time history had
+median 15h, Q3 112h and worst 1447h.
+
+### The problem
+Lead time runs `ready_at → closed_at` (Estimator rules). When the agents that execute beads are not
+running at all — pool suspended, host down, a usage cap — that wall-clock time lands in every
+closed training sample, every censored open bead's age, and every blocked bead's whole-lead-time
+draw (`dist.SampleBeyond`'s Lindy fallback draws straight from the inflated age). The model learns
+downtime as work.
+
+### Scope: A (inferred) + C (declared), as directed
+- **C. Declared windows** (`internal/idle.Declared`, `expert.idle`): explicit `{start, end, note}`
+  intervals, end optional (still open). Zero inference — the override case: a window an operator
+  knows about (a host migration, a recorded pool suspension) is masked exactly, whether or not a
+  gap in the loaded beads' own timestamps would have shown it.
+- **A. Inferred windows** (`internal/idle.Infer`): a cross-repo activity timeline —
+  created/updated/started/closed timestamps of every record beadline loads, work and infra alike,
+  across every repo (`load.Exports.ActivityTimestamps`; bd export carries no separate comment
+  timestamps, so a comment's bump to `updated_at` is what stands in for it). A gap of more than `G`
+  hours (`expert.idle_gap_hours`) with no activity anywhere becomes a window.
+- Both feed one `idle.Mask` (`internal/idle.New`), merged and clipped to the horizon they are built
+  for. `estimate.Params.Active` and `estimate.Sampler`'s age conditioning subtract the mask from
+  every closed-sample duration and every open bead's age — the three places the scope named (closed
+  samples, censored ages; a blocked bead's draw is automatically correct once its Dist is fit on
+  masked observations, needing no separate code path).
+- `internal/idle` is deliberately generic: no gc dependency, matching beadline's non-gc-specific
+  design (Non-goals). A gc-side signal such as a suspended pool can only enter as a Declared window
+  someone writes to `expert.idle`.
+
+### 1. Mapping back to calendar dates — escalated, not decided
+**The question.** Masked training yields *active* durations. Turning a simulated active duration
+back into a calendar date needs an availability assumption. The bead's two options:
+- **100% forward**: durations run wall-to-wall from `DateFrom`; no further correction
+  (`forecast.Options.Availability` at its default, 1).
+- **Measured recent duty cycle**: every drawn duration is divided by the mask's measured
+  `active-minutes / calendar-minutes` over the model window (`cli.availability`), applied once per
+  duration at draw time (`sim.run`) so it is a plain multiplicative stretch of the whole schedule,
+  not a compounding one — the agent/human split and `GridHours`/`OnTime` (which calibration and
+  `due_at` read as hours from `Now`) stay consistent by construction (`forecast_test.go`,
+  `TestAvailabilityPreservesSplitInvariant`).
+
+**Why this needed a real backtest, not a guess.** The obvious worry about 100% forward — it is
+optimistic whenever downtime recurs — is exactly the bug this bead exists to fix, so the ADR-2 §4
+backtest recipe (rolling-origin replay of the five town repos' real exports, `bd -C DIR --readonly
+export`, 2026-09-21) was rerun for both options across a sweep of `G`, and a live forecast of
+hivemind-tenv was rerun for each.
+
+**Evidence.** 118-day span, 32 origins, leaf beads (the release-gate metric); hivemind-tenv as of
+the same export.
+
+| Mode | G | Leaf P80 held | Gate | Bias | CRPS | tenv P50 | tenv agent-h |
+|---|---|---|---|---|---|---|---|
+| main (before) | — | 74% (299/404) | PASS | +0.7 d | 13.1 d | 2026-12-01 | 1722 |
+| duty cycle | 0 (=before) | 74% | PASS | +0.7 d | 13.1 d | 2026-12-01 | 1722 |
+| duty cycle | 12h | 63% | **FAIL** | | | | |
+| duty cycle | 24h | 67% | **FAIL** | -0.8 d | 19.1 d | 2027-01-27 | 3073 (worse) |
+| duty cycle | 48h | 71% | PASS (barely) | -0.2 d | 14.0 d | 2027-02-02 | 3221 (worse) |
+| duty cycle | 96h | 73% | PASS | +0.3 d | 13.2 d | 2026-12-07 | 1849 (worse) |
+| 100% forward | 24h | 39% | **FAIL** | | | 2026-10-16 | 598 (better) |
+| 100% forward | 48h | 55% | **FAIL** | | | 2026-10-31 | 974 (better) |
+
+Both are internally consistent with why they exist. 100% forward removes the systematic lateness
+that idle-inflated training put into durations, so every date — hivemind-tenv included — gets
+shorter and moves the right way; but with no correction for future downtime, the whole leaf
+population comes in far too early (leaf P80 held 39-55%, "intervals too narrow" — too many leaves
+close after their predicted P80). Duty cycle keeps leaf calibration inside the gate at `G ≥ 48h`,
+but it makes hivemind-tenv *worse*, monotonically more so as `G` shrinks (more masking → a lower
+measured duty cycle → a bigger 1/availability stretch). The real town data explains why: over the
+45-day model window the measured duty cycle is 0.30 at `G=48h` and 0.68 at `G=96h` — the five
+repos' combined activity is genuinely bursty (long quiet stretches, then bursts), not a smooth
+day-to-day discount. Dividing every one of an item's many remaining durations by the same constant
+duty cycle is the right shape for a steady partial availability; it is the wrong shape for a
+bursty one, where the calendar cost of an occasional multi-day gap is closer to an additive delay
+than a multiplicative stretch applied to every bead in the chain. Neither option, at any `G`
+tried, holds the release gate **and** moves hivemind-tenv toward the crew's ~40-agent-hour
+estimate at the same time — and even 100% forward's best case (598h) is over an order of magnitude
+from 40h, which says the miss is not idle time alone.
+
+**Decision.** Per the bead's explicit instruction — *"If the backtest says A+C cannot meet the
+acceptance below, STOP and report to the mayor with the numbers. Do not switch to option B on your
+own"* — this is that stop. The mechanism (A + C, `internal/idle`, the estimator and forecaster
+wiring, `roadmap.json`'s `idle` object) is implemented, tested and merges. `expert.idle_gap_hours`
+defaults to **0: inference off**, so out of the box a forecast is byte-for-byte what main produces
+(confirmed: `G=0` reproduces the "before" row above exactly) and the release gate is unaffected.
+Declared windows (`expert.idle`) still work, unmasked by this finding: a known, bounded incident is
+a fact, not a statistical inference, and masking one exactly does not carry the bursty-average
+mismatch above. Escalated to the mayor (`beadline/gastown.mayor`, 2026-09-21): whether to accept a
+smaller, C-only rollout for now, invest in an additive (not multiplicative) future-idle model
+within A+C as a follow-up, or decide on option B. Not decided here.
+
+### 2. Idle now
+**Decision.** When the mask is idle as of `Now` (an inferred trailing gap already past `G`, or an
+open Declared window) and `expert.idle_resume_at` names a future moment, dates are counted from
+there instead of from `Now` (`forecast.Options.DateFrom`); the gap between the two is folded into
+`HumanHours`, not `AgentHours` (nobody is working it), which keeps `agent_hours + human_hours = At
+− Now`. Readiness and every other "as of now" graph fact are unaffected — only the calendar label
+of a finish moves. Without a declared resume, `DateFrom` stays `Now`: silently assuming immediate
+resumption is the same 100%-forward optimism as §1, but a forecast has to start counting from
+somewhere, and `roadmap.json`'s `idle.currently_idle` (with no `resume_at`) says so plainly rather
+than hiding it — the "never silent" half of the acceptance criteria, which this mechanism meets
+regardless of §1's outcome.
+
+### 3. Backtest leakage
+**Decision.** `load.Exports.ActivityTimestamps(asOf)` reuses the exact rewind (`record.rewind`)
+`Exports.Graph` already uses for a backtest origin: a record's timestamps are taken as they stood
+at `asOf`, not as they are now, so a window inferred at an origin can only be built from events
+that origin could have known about (`load_test.go`, `TestActivityTimestamps`). `idle.New` clips
+every window — declared or inferred — to the horizon it is built for, so a Declared window's
+configured end (or lack of one) cannot leak past a past origin either (`idle_test.go`,
+`TestMaskClipsToHorizonNoLeakage`). `calibrate.Backtest`'s per-origin `Forecaster` closure builds
+the mask from `ex.ActivityTimestamps(t)` at each origin `t`, the same graph-rewind moment already
+used for everything else it learns from.
+
+### Evidence archive
+The table above comes from exports of the five town repos taken 2026-09-21 (`bd -C DIR --readonly
+export` on hivemind, hivemind-ui, hivemind-benchmarks, hivemind-company and beadline), two binaries
+built from the same exports (`git describe` `fdc73b5` for "before"; this bead's branch for
+"after"), and `beadline check --backtest 118d`/`60d` plus `--explain hivemind-tenv` against each.
+Exports and binaries are not committed (large, and reproducible from the recipe above); rerun the
+same commands against fresh exports to reproduce or extend the sweep.
