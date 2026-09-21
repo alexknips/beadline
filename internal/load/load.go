@@ -207,6 +207,33 @@ func (ex *Exports) Horizon() time.Time {
 	return h
 }
 
+// ActivityTimestamps returns every created/updated/started/closed
+// timestamp of every record beadline read, work or infra alike, across
+// every source, as visible as of asOf: the cross-repo activity timeline
+// idle.Infer masks idle time from (docs/design.md, ADR-3). A zero asOf
+// takes every record as loaded, with no rewind. Records are rewound the
+// same way Graph rewinds them, so a backtest origin sees only the activity
+// it could have known about then (ADR-3 §3): a later timestamp is left
+// out, not just filtered, because rewind also undoes an update, start or
+// close that happened after asOf. The result is not sorted.
+func (ex *Exports) ActivityTimestamps(asOf time.Time) []time.Time {
+	var out []time.Time
+	for _, p := range ex.sources {
+		for n := range p.records {
+			rec := p.records[n] // copy: rewind must not mutate the parsed export
+			if !asOf.IsZero() && !rec.rewind(asOf, ex.skew) {
+				continue
+			}
+			for _, t := range []*time.Time{rec.CreatedAt, rec.UpdatedAt, rec.StartedAt, rec.ClosedAt} {
+				if t != nil && (asOf.IsZero() || !t.After(asOf)) {
+					out = append(out, t.UTC())
+				}
+			}
+		}
+	}
+	return out
+}
+
 // Skew is a constant error in dependency created_at timestamps from Since
 // on: bd stored them in the server's local time zone but exported them as
 // UTC. Dependencies created at or after Since are Offset late.

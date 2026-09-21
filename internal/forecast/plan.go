@@ -40,6 +40,13 @@ type plan struct {
 	g   *graph.Graph
 	o   *Options
 	now time.Time
+	// dateFrom and availability resolve Options.DateFrom and
+	// Options.Availability (ADR-3): every drawn duration is scaled by
+	// 1/availability (sim.run), and dates are counted from dateFrom
+	// (sim.point), so a declared resume and a measured duty cycle both
+	// apply with no other change to the schedule.
+	dateFrom     time.Time
+	availability float64
 
 	nodes []node
 	index map[string]int32 // schedulable open beads
@@ -59,6 +66,7 @@ type plan struct {
 func newPlan(g *graph.Graph, o *Options) *plan {
 	p := &plan{
 		g: g, o: o, now: o.Now,
+		dateFrom: o.dateFrom(), availability: o.availability(),
 		index:     map[string]int32{},
 		parked:    map[string]bool{},
 		stuck:     map[string]bool{},

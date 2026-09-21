@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -22,6 +23,10 @@ type Config struct {
 	Repos       []Repo
 	Conventions Conventions
 	Model       Model
+	// Idle is expert.idle_gap_hours, expert.idle_resume_at and expert.idle:
+	// what every clock masks out as time nothing ran (docs/design.md,
+	// ADR-3).
+	Idle Idle
 	// Agents are the agent counts by repo name ([expert] agents). SetRepos
 	// and ApplyAgents copy them onto Repos.
 	Agents map[string]Concurrency
@@ -31,6 +36,31 @@ type Config struct {
 	// Dir is the directory relative repo paths resolve against: the
 	// directory of the config file, or the working directory.
 	Dir string
+}
+
+// Idle configures the idle-time mask (docs/design.md, ADR-3): the stretches
+// of calendar time beadline learns as downtime, not work.
+type Idle struct {
+	// GapHours is G: a gap of more than this many hours with no activity
+	// anywhere across every loaded repo counts as inferred idle time. 0
+	// disables inference; only Declared windows mask anything.
+	GapHours float64
+	// ResumeAt is when work is declared to resume, if the data shows the
+	// city idle as of now (an open Declared window, or a gap already past
+	// GapHours). It is the horizon a forecast counts dates from instead of
+	// now, when it is set and in the future (ADR-3 §2). Zero: none
+	// declared.
+	ResumeAt time.Time
+	// Declared are explicit idle windows: a zero-inference override for
+	// GapHours, and the only way to mask a gap inference would miss.
+	Declared []DeclaredWindow
+}
+
+// DeclaredWindow is one explicit idle window (expert.idle). End zero means
+// the window was still open as of when the config was written.
+type DeclaredWindow struct {
+	Start, End time.Time
+	Note       string
 }
 
 // Repo is one repository.
@@ -155,6 +185,9 @@ func Default() Config {
 			PoolingStrength:     10,
 			TailCapFactor:       3,
 		},
+		// 24h: a gap the whole loaded set of repos shares, not one quiet
+		// repo. ADR-3 picked it from the release-gate backtest.
+		Idle:   Idle{GapHours: 24},
 		Agents: map[string]Concurrency{},
 	}
 	if err := c.Conventions.Compile(); err != nil {
@@ -183,12 +216,23 @@ type expert struct {
 	CycleMinutesPrior float64                `toml:"cycle_minutes_prior"`
 	PoolingStrength   float64                `toml:"pooling_strength"`
 	TailCapFactor     float64                `toml:"tail_cap_factor"`
+	IdleGapHours      float64                `toml:"idle_gap_hours"`
+	IdleResumeAt      time.Time              `toml:"idle_resume_at"`
+	Idle              []idleWindow           `toml:"idle"`
 }
 
 type humanGate struct {
 	Titles     []string `toml:"titles"`
 	Metadata   []string `toml:"metadata"`
 	HoursPrior float64  `toml:"hours_prior"`
+}
+
+// idleWindow is one entry of expert.idle: an explicit idle interval. End
+// zero (omitted) means the window was still open as of the config.
+type idleWindow struct {
+	Start time.Time `toml:"start"`
+	End   time.Time `toml:"end"`
+	Note  string    `toml:"note"`
 }
 
 // Keys lists every key beadline.toml accepts, as dotted paths. Under
@@ -209,6 +253,9 @@ var Keys = []string{
 	"expert.cycle_minutes_prior",
 	"expert.pooling_strength",
 	"expert.tail_cap_factor",
+	"expert.idle_gap_hours",
+	"expert.idle_resume_at",
+	"expert.idle",
 }
 
 // renamed maps the keys of the layout before ADR-2 to their new names.
@@ -229,6 +276,10 @@ var renamed = map[string]string{
 
 func fileOf(c *Config) file {
 	cv, m := c.Conventions, c.Model
+	windows := make([]idleWindow, len(c.Idle.Declared))
+	for i, d := range c.Idle.Declared {
+		windows[i] = idleWindow{Start: d.Start, End: d.End, Note: d.Note}
+	}
 	return file{Expert: expert{
 		Agents:       map[string]Concurrency{},
 		RoadmapTypes: cv.HighLevelTypes,
@@ -242,6 +293,9 @@ func fileOf(c *Config) file {
 		CycleMinutesPrior: m.CycleMinutesPrior,
 		PoolingStrength:   m.PoolingStrength,
 		TailCapFactor:     m.TailCapFactor,
+		IdleGapHours:      c.Idle.GapHours,
+		IdleResumeAt:      c.Idle.ResumeAt,
+		Idle:              windows,
 	}}
 }
 
@@ -263,6 +317,11 @@ func (f *file) apply(c *Config) {
 		PoolingStrength:     e.PoolingStrength,
 		TailCapFactor:       e.TailCapFactor,
 	}
+	declared := make([]DeclaredWindow, len(e.Idle))
+	for i, w := range e.Idle {
+		declared[i] = DeclaredWindow{Start: w.Start, End: w.End, Note: w.Note}
+	}
+	c.Idle = Idle{GapHours: e.IdleGapHours, ResumeAt: e.IdleResumeAt, Declared: declared}
 	c.Agents = e.Agents
 	c.Hide = e.Hide
 	c.SetRepos(f.Repos)
@@ -473,7 +532,24 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 	errs = append(errs, c.Model.validate()...)
+	errs = append(errs, c.Idle.validate()...)
 	return errors.Join(errs...)
+}
+
+func (idl Idle) validate() []error {
+	var errs []error
+	if idl.GapHours < 0 {
+		errs = append(errs, fmt.Errorf("expert.idle_gap_hours must not be negative, got %v", idl.GapHours))
+	}
+	for i, w := range idl.Declared {
+		switch {
+		case w.Start.IsZero():
+			errs = append(errs, fmt.Errorf("expert.idle[%d]: start is required", i))
+		case !w.End.IsZero() && !w.End.After(w.Start):
+			errs = append(errs, fmt.Errorf("expert.idle[%d]: end (%v) must be after start (%v)", i, w.End, w.Start))
+		}
+	}
+	return errs
 }
 
 func (m Model) validate() []error {
@@ -531,7 +607,21 @@ func (c *Config) NonDefault() []string {
 	add("cycle_minutes_prior", e.CycleMinutesPrior != de.CycleMinutesPrior, num(e.CycleMinutesPrior))
 	add("pooling_strength", e.PoolingStrength != de.PoolingStrength, num(e.PoolingStrength))
 	add("tail_cap_factor", e.TailCapFactor != de.TailCapFactor, num(e.TailCapFactor))
+	add("idle_gap_hours", e.IdleGapHours != de.IdleGapHours, num(e.IdleGapHours))
+	if !c.Idle.ResumeAt.IsZero() {
+		out = append(out, "idle_resume_at = "+strconv.Quote(c.Idle.ResumeAt.UTC().Format(time.RFC3339)))
+	}
+	if len(c.Idle.Declared) > 0 {
+		out = append(out, fmt.Sprintf("idle = %s declared", plural(float64(len(c.Idle.Declared)), "window")))
+	}
 	return out
+}
+
+func plural(n float64, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return num(n) + " " + noun + "s"
 }
 
 func num(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }

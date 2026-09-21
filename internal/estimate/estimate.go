@@ -84,6 +84,21 @@ type Params struct {
 	CyclePriorMinutes float64 // median of the cycle-time root prior
 	PoolingStrength   float64 // k: pseudo-observations a node borrows from its parent
 	TailCapFactor     float64 // draws are capped at this × the longest observation
+	// Active returns the active (idle-masked) minutes between from and to
+	// (from <= to): what every duration and every open bead's age is
+	// measured in, so a stretch when nothing ran is not learned as work
+	// (docs/design.md, ADR-3). nil, the default, is the plain wall-clock
+	// difference: no idle time is known.
+	Active func(from, to time.Time) float64
+}
+
+// active returns the active minutes between from and to: p.Active(from, to)
+// when set, else the plain wall-clock difference.
+func (p Params) active(from, to time.Time) float64 {
+	if p.Active != nil {
+		return p.Active(from, to)
+	}
+	return to.Sub(from).Minutes()
 }
 
 // DefaultParams matches the beadline.toml defaults. Lead time has no key of
@@ -245,11 +260,11 @@ func Learn(beads []Bead, now time.Time, p Params) (*Model, error) {
 			}
 			s.Closes++
 			if !ready.IsZero() && !ready.After(b.ClosedAt) {
-				lead.add(c, b.ClosedAt.Sub(ready).Minutes(), false)
+				lead.add(c, p.active(ready, b.ClosedAt), false)
 			}
 			if started(b, b.ClosedAt) {
 				s.Started++
-				cycle.add(c, b.ClosedAt.Sub(b.StartedAt).Minutes(), false)
+				cycle.add(c, p.active(b.StartedAt, b.ClosedAt), false)
 			}
 			continue
 		}
@@ -260,11 +275,11 @@ func Learn(beads []Bead, now time.Time, p Params) (*Model, error) {
 		inProgress := b.Status == StatusInProgress
 		entered := false
 		if inProgress && started(b, now) && b.StartedAt.After(since) {
-			cycle.add(c, now.Sub(b.StartedAt).Minutes(), true)
+			cycle.add(c, p.active(b.StartedAt, now), true)
 			entered = true
 		}
 		if (inProgress || !b.Blocked) && !ready.IsZero() && ready.After(since) && !ready.After(now) {
-			lead.add(c, now.Sub(ready).Minutes(), true)
+			lead.add(c, p.active(ready, now), true)
 			entered = true
 		}
 		if entered {
@@ -314,7 +329,7 @@ func (m *Model) Sampler(b Bead) Sampler {
 		since = b.readyAt()
 	}
 	if !since.IsZero() && m.now.After(since) {
-		s.age = m.now.Sub(since).Minutes()
+		s.age = m.params.active(since, m.now)
 	}
 	return s
 }

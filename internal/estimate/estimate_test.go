@@ -229,6 +229,66 @@ func TestLeadFromReady(t *testing.T) {
 	}
 }
 
+// ADR-3: an Active function that masks a declared idle window shortens the
+// lead times learned from closes that spanned it, and the age of an open
+// bead conditioned on it, by exactly the masked time.
+func TestActiveMasksIdleTime(t *testing.T) {
+	idleStart := now.Add(-72 * time.Hour)
+	idleEnd := now.Add(-48 * time.Hour) // a 24h idle window, 48-72h before now
+	active := func(from, to time.Time) float64 {
+		minutes := to.Sub(from).Minutes()
+		start, end := idleStart, idleEnd
+		if start.Before(from) {
+			start = from
+		}
+		if end.After(to) {
+			end = to
+		}
+		if end.After(start) {
+			minutes -= end.Sub(start).Minutes()
+		}
+		return minutes
+	}
+
+	// Every bead has a lead time of 96h (ready 96h before close), spanning
+	// the whole 24h idle window: the masked lead time should be 72h. Many
+	// beads at distinct minutes (bulk-close hygiene skips 5+ in one minute)
+	// swamp the backoff pooling (ADR-1 §2), so the learned P50 tracks the
+	// observation almost exactly either way.
+	var beads []Bead
+	for i := 0; i < 500; i++ {
+		closed := now.Add(-time.Duration(i) * time.Minute)
+		beads = append(beads, Bead{ID: fmt.Sprint(i), Repo: "api", Type: "task", Status: "closed",
+			CreatedAt: closed.Add(-96 * time.Hour), ClosedAt: closed})
+	}
+	p := DefaultParams()
+	p.Active = active
+
+	masked, err := Learn(beads, now, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unmasked, err := Learn(beads, now, DefaultParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := masked.Estimate(Bead{Repo: "api", Type: "task"})
+	ue := unmasked.Estimate(Bead{Repo: "api", Type: "task"})
+	within(t, "masked lead P50", me.Lead.P50, 72*60, 0.05)
+	within(t, "unmasked lead P50", ue.Lead.P50, 96*60, 0.05)
+
+	// An open bead ready since before the idle window has its age reduced
+	// by the same 24h when the sampler conditions on it.
+	ready := now.Add(-96 * time.Hour)
+	open := Bead{Repo: "api", Type: "task", Status: "open", ReadyAt: ready, CreatedAt: ready}
+	if got := masked.Sampler(open).age; math.Abs(got-72*60) > 1 {
+		t.Errorf("masked sampler age = %.1f minutes, want 72h", got)
+	}
+	if got := unmasked.Sampler(open).age; math.Abs(got-96*60) > 1 {
+		t.Errorf("unmasked sampler age = %.1f minutes, want 96h", got)
+	}
+}
+
 // Only beads with a usable start teach cycle times; every delivery teaches
 // a lead time.
 func TestCycleNeedsStart(t *testing.T) {

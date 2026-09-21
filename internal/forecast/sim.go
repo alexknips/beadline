@@ -68,15 +68,22 @@ type event struct {
 // run simulates one schedule with r.
 func (s *sim) run(r *rand.Rand) {
 	p := s.p
+	// Every drawn duration is scaled by 1/availability (ADR-3 §1): the
+	// estimator already learns durations net of idle time, so this turns
+	// them back into calendar time. A uniform scale leaves dispatch order,
+	// concurrency and every other relative comparison unchanged; only the
+	// absolute minutes downstream (finish times, the chain split, the
+	// quantile grid) come out as calendar minutes.
+	avail := p.availability
 	for k := range p.nodes {
 		n := &p.nodes[k]
 		s.queue[k], s.own[k] = 0, 0
 		switch {
 		case n.gate:
-			s.own[k] = duration(n.wait(r))
+			s.own[k] = duration(n.wait(r) / avail)
 		case !n.container:
 			q, w := n.agent.Draw(r)
-			s.queue[k], s.own[k] = duration(q), duration(w)
+			s.queue[k], s.own[k] = duration(q/avail), duration(w/avail)
 		}
 	}
 	for repo := range s.running {
@@ -213,7 +220,11 @@ func (s *sim) point(nodes []int32) Point {
 		human += wait
 		agent += span - wait
 	}
-	return Point{At: at(s.p.now, s.last(nodes)), AgentHours: hours(agent), HumanHours: hours(human)}
+	// dateFrom may sit after now (ADR-3 §2, currently idle with a declared
+	// resume): that gap is nobody's agent time, so it is folded into human
+	// time, keeping agent + human = At − now (the documented invariant).
+	offset := minutes(s.p.dateFrom.Sub(s.p.now))
+	return Point{At: at(s.p.dateFrom, s.last(nodes)), AgentHours: hours(agent), HumanHours: hours(human + offset)}
 }
 
 // chain returns the IDs of the beads with time of their own on the chain

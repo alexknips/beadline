@@ -58,6 +58,35 @@ type Options struct {
 	// level (Item.GridHours), and Result.Leaves forecasts the close of every
 	// open leaf the schedule covers: the grid that calibration scores.
 	Grid []float64
+
+	// DateFrom is where finish dates are counted from; the zero value uses
+	// Now. Set it to a declared resume time when the whole system is idle
+	// right now, so dates do not silently assume work resumes this instant
+	// (docs/design.md, ADR-3 §2). Readiness and every other "as of now"
+	// graph fact still use Now: only the calendar label of a finish moves.
+	DateFrom time.Time
+	// Availability is the measured fraction of calendar time the agents are
+	// actually active, used to turn simulated durations (already learned
+	// net of idle time, Estimator rules) back into calendar time (ADR-3
+	// §1). The zero value behaves as 1: durations run wall-to-wall from
+	// DateFrom, with no further correction.
+	Availability float64
+}
+
+// dateFrom is DateFrom, or Now when it is unset.
+func (o *Options) dateFrom() time.Time {
+	if o.DateFrom.IsZero() {
+		return o.Now
+	}
+	return o.DateFrom
+}
+
+// availability is Availability, or 1 when it is not positive.
+func (o *Options) availability() float64 {
+	if o.Availability <= 0 {
+		return 1
+	}
+	return o.Availability
 }
 
 func (o *Options) validate() error {
@@ -243,6 +272,12 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 	}
 	wg.Wait()
 
+	// offset is how far DateFrom sits after Now, in minutes: finish[] and
+	// leafFinish[] are already calendar minutes from DateFrom (sim.run
+	// scales every draw by 1/Availability), but GridHours and OnTime are
+	// counted from Now, as calibration expects (Estimator rules, ADR-3 §1).
+	offset := minutes(p.dateFrom.Sub(o.Now))
+
 	res := &Result{Now: o.Now, Runs: o.Runs, Seed: o.Seed, Concurrency: p.concurrency(), Items: []Item{}, Goals: []Item{}, Grid: o.Grid}
 	traces := map[int]*sim{}
 	trace := func(run int) *sim {
@@ -264,12 +299,12 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 			}
 			out.P50, out.P80, out.P95 = point(0.5), point(0.8), point(0.95)
 			out.CriticalChain = trace(order[nearestRank(0.8, len(order))]).chain(it.nodes)
-			out.GridHours = gridHours(finish[k], o.Grid)
+			out.GridHours = gridHours(finish[k], o.Grid, offset)
 			if out.DueAt != nil {
 				limit := minutes(out.DueAt.Sub(o.Now))
 				n := 0
 				for _, f := range finish[k] {
-					if f <= limit {
+					if f+offset <= limit {
 						n++
 					}
 				}
@@ -285,14 +320,15 @@ func Run(g *graph.Graph, o Options) (*Result, error) {
 	}
 	for j, k := range leaves {
 		i := p.nodes[k].issue
-		res.Leaves = append(res.Leaves, Leaf{ID: i.ID, Repo: i.Repo, GridHours: gridHours(leafFinish[j], o.Grid)})
+		res.Leaves = append(res.Leaves, Leaf{ID: i.ID, Repo: i.Repo, GridHours: gridHours(leafFinish[j], o.Grid, offset)})
 	}
 	return res, nil
 }
 
-// gridHours returns the nearest-rank quantiles of finishes (minutes from
-// now) at the grid levels, in hours; nil for an empty grid.
-func gridHours(finishes []float64, grid []float64) []float64 {
+// gridHours returns the nearest-rank quantiles of finishes (calendar
+// minutes from DateFrom) at the grid levels, in hours from Now (offset
+// minutes ahead of DateFrom added back in); nil for an empty grid.
+func gridHours(finishes []float64, grid []float64, offset float64) []float64 {
 	if len(grid) == 0 {
 		return nil
 	}
@@ -300,7 +336,7 @@ func gridHours(finishes []float64, grid []float64) []float64 {
 	sort.Float64s(sorted)
 	out := make([]float64, len(grid))
 	for n, q := range grid {
-		out[n] = hours(math.Min(sorted[nearestRank(q, len(sorted))], maxMinutes))
+		out[n] = hours(math.Min(sorted[nearestRank(q, len(sorted))]+offset, maxMinutes))
 	}
 	return out
 }

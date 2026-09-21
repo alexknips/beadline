@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -334,6 +335,54 @@ func TestGraphAsOf(t *testing.T) {
 	if now.Len() != 7 || now.Issue("r-6").Status != "closed" || !reflect.DeepEqual(now.Issue("r-6").Parents, []string{"r-2"}) ||
 		now.Issue("r-3").Status != "deferred" {
 		t.Errorf("graph as exported changed by an earlier rewind: %v", ids(now.Issues()))
+	}
+}
+
+// ActivityTimestamps feeds idle.Infer's cross-repo timeline (ADR-3): every
+// created/updated/started/closed timestamp of every record, work or infra,
+// and no leakage past the asOf a backtest origin rewinds to.
+func TestActivityTimestamps(t *testing.T) {
+	ex, err := Parse(Source{Repo: "r", Name: "r.jsonl", R: strings.NewReader(strings.Join([]string{
+		`{"id":"r-1","status":"closed","close_reason":"done","created_at":"2026-09-01T08:00:00Z","started_at":"2026-09-01T10:00:00Z","closed_at":"2026-09-02T12:00:00Z","updated_at":"2026-09-02T12:00:00Z"}`,
+		// Infra record: still counts as activity, even though the loader
+		// drops it from the graph.
+		`{"id":"r-w","issue_type":"wisp","status":"open","created_at":"2026-09-01T09:00:00Z","updated_at":"2026-09-03T11:00:00Z"}`,
+		// Created and closed after the rewind point below: invisible then.
+		`{"id":"r-2","status":"closed","close_reason":"done","created_at":"2026-09-05T08:00:00Z","closed_at":"2026-09-05T09:00:00Z","updated_at":"2026-09-05T09:00:00Z"}`,
+	}, "\n"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all := ex.ActivityTimestamps(time.Time{})
+	sort.Slice(all, func(a, b int) bool { return all[a].Before(all[b]) })
+	want := []time.Time{
+		ts("2026-09-01T08:00:00Z"), ts("2026-09-01T09:00:00Z"), ts("2026-09-01T10:00:00Z"),
+		ts("2026-09-02T12:00:00Z"), ts("2026-09-02T12:00:00Z"),
+		ts("2026-09-03T11:00:00Z"),
+		ts("2026-09-05T08:00:00Z"), ts("2026-09-05T09:00:00Z"), ts("2026-09-05T09:00:00Z"),
+	}
+	if !reflect.DeepEqual(all, want) {
+		t.Errorf("ActivityTimestamps(zero) = %v, want %v", all, want)
+	}
+
+	// Rewound to before r-2 existed and before r-w's last update: neither
+	// leaks in, exactly as Graph(asOf) would not show them (no leakage,
+	// ADR-3 §3).
+	asOf := ts("2026-09-02T12:00:00Z")
+	rewound := ex.ActivityTimestamps(asOf)
+	sort.Slice(rewound, func(a, b int) bool { return rewound[a].Before(rewound[b]) })
+	wantRewound := []time.Time{
+		ts("2026-09-01T08:00:00Z"), ts("2026-09-01T09:00:00Z"), ts("2026-09-01T10:00:00Z"),
+		ts("2026-09-02T12:00:00Z"), ts("2026-09-02T12:00:00Z"),
+	}
+	if !reflect.DeepEqual(rewound, wantRewound) {
+		t.Errorf("ActivityTimestamps(%v) = %v, want %v (no future leakage)", asOf, rewound, wantRewound)
+	}
+	for _, when := range rewound {
+		if when.After(asOf) {
+			t.Errorf("ActivityTimestamps(%v) leaked a timestamp after asOf: %v", asOf, when)
+		}
 	}
 }
 

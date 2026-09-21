@@ -7,7 +7,16 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+func ts(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		panic(err)
+	}
+	return t.UTC()
+}
 
 const minimal = `repos = ["api.jsonl"]
 `
@@ -122,6 +131,53 @@ func TestParseFull(t *testing.T) {
 	}
 }
 
+const withIdle = minimal + `
+[expert]
+idle_gap_hours = 36
+idle_resume_at = 2026-09-22T00:00:00Z
+idle = [
+  { start = 2026-09-05T00:00:00Z, end = 2026-09-09T00:00:00Z, note = "host migration" },
+  { start = 2026-09-15T00:00:00Z },
+]
+`
+
+func TestParseIdle(t *testing.T) {
+	c, err := Parse(withIdle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Idle.GapHours != 36 {
+		t.Errorf("idle_gap_hours = %v, want 36", c.Idle.GapHours)
+	}
+	if want := ts("2026-09-22T00:00:00Z"); !c.Idle.ResumeAt.Equal(want) {
+		t.Errorf("idle_resume_at = %v, want %v", c.Idle.ResumeAt, want)
+	}
+	want := []DeclaredWindow{
+		{Start: ts("2026-09-05T00:00:00Z"), End: ts("2026-09-09T00:00:00Z"), Note: "host migration"},
+		{Start: ts("2026-09-15T00:00:00Z")},
+	}
+	if !reflect.DeepEqual(c.Idle.Declared, want) {
+		t.Errorf("idle = %+v, want %+v", c.Idle.Declared, want)
+	}
+	wantSettings := []string{"idle_gap_hours = 36", `idle_resume_at = "2026-09-22T00:00:00Z"`, "idle = 2 windows declared"}
+	if got := c.NonDefault(); !reflect.DeepEqual(got, wantSettings) {
+		t.Errorf("NonDefault =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(wantSettings, "\n"))
+	}
+}
+
+func TestDefaultIdleGapHours(t *testing.T) {
+	c, err := Parse(minimal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Idle.GapHours != 24 {
+		t.Errorf("default idle_gap_hours = %v, want 24 (ADR-3)", c.Idle.GapHours)
+	}
+	if got := c.NonDefault(); got != nil {
+		t.Errorf("NonDefault = %v, want none for the default idle settings", got)
+	}
+}
+
 func TestPartialTablesKeepDefaults(t *testing.T) {
 	c, err := Parse(minimal + "[expert]\nhuman_gate = { metadata = [\"hold_reason\"] }\n")
 	if err != nil {
@@ -153,6 +209,9 @@ func TestParseErrors(t *testing.T) {
 		{"no roadmap types", minimal + "[expert]\nroadmap_types = []", "at least one type"},
 		{"roadmap and ignored", minimal + "[expert]\nroadmap_types = [\"epic\"]\nignore_types = [\"epic\"]", "both roadmap_types and ignore_types"},
 		{"bad model", minimal + "[expert]\nruns = 0\ntail_cap_factor = 0.5\npooling_strength = -1", "expert.runs"},
+		{"negative idle gap", minimal + "[expert]\nidle_gap_hours = -1", "expert.idle_gap_hours must not be negative"},
+		{"idle window without start", minimal + "[expert]\nidle = [{ end = 2026-09-09T00:00:00Z }]", "expert.idle[0]: start is required"},
+		{"idle window end before start", minimal + "[expert]\nidle = [{ start = 2026-09-09T00:00:00Z, end = 2026-09-05T00:00:00Z }]", "end (2026-09-05"},
 		{"not toml", "repos = [\n", "toml"},
 	}
 	for _, tt := range tests {
